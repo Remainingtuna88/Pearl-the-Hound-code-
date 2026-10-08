@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<!--
+  Pearl UI — single-file observability dashboard
+  ====================================
+  Runs on your laptop. Fetches from the robot over local WiFi. Read-only, except for
+  "Set target" and "Recall / stop".
+
+  >>> CONFIGURATION IS THE FIRST <script> BLOCK BELOW. <<<
+  To go live:  1) edit ROBOT_BASE_URL   2) click LIVE in the header.   That's all.
+
+  The JSON contract the ROS2 backend must implement is documented in full in that same
+  block. Write the backend against it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pearl UI</title>
+
+<script>
+/* =====================================================================================
+   CONFIG — the only things you should need to touch
+   ===================================================================================== */
+
+/** Robot base URL — FILL THIS IN before going live.
+ *  NOTE: Replace ROBOT_IP with the robot's LAN IP address (find it on the robot with `hostname -I`)
+ *  and PORT with the port your backend HTTP server listens on (e.g. 8000).
+ *  Example shape: "http://192.168.x.x:8000". Don't commit your real IP to a public repo.
+ *  Switching mock → live = edit this constant + flip the MOCK/LIVE toggle in the header. */
+const ROBOT_BASE_URL = "http://ROBOT_IP:PORT";
+
+/** "mock" or "live". Mock is the default on purpose: the backend does not exist yet. */
+const DEFAULT_MODE = "mock";
+
+/** How often the dashboard polls the robot. The Pi has almost no spare CPU — keep this gentle. */
+const POLL_INTERVAL_MS = 1500;
+
+/** Per-request timeout. Anything slower is reported as "unreachable", never left hanging. */
+const REQUEST_TIMEOUT_MS = 2500;
+
+/** A vision result older than this is drawn as STALE (grey, dashed box, warning label). */
+const VISION_STALE_MS = 5000;
+
+/** Camera. CAMERA_REFRESH_MS = 0 → treat <ROBOT_BASE_URL>/camera/stream as an MJPEG stream.
+ *  CAMERA_REFRESH_MS > 0 → re-fetch a single JPEG from that path every N ms (cache-busted). */
+const CAMERA_STREAM_PATH = "/camera/stream";
+/** Full camera URL (optional). If set, the camera panel loads this instead of ROBOT_BASE_URL+CAMERA_STREAM_PATH.
+ *  NOTE: Set to "" to use the backend's own stream. To use a separate stream server instead
+ *  (e.g. ROS web_video_server), replace the placeholders:
+ *    ROBOT_IP      → the robot's LAN IP (same as in ROBOT_BASE_URL)
+ *    STREAM_PORT   → the stream server's port (web_video_server defaults to 8080)
+ *    CAMERA_TOPIC  → your camera's ROS2 image topic (list them on the robot with `ros2 topic list`) */
+const CAMERA_URL = "http://ROBOT_IP:STREAM_PORT/stream?topic=/CAMERA_TOPIC";
+const CAMERA_REFRESH_MS = 0;
+
+/** If every endpoint has been failing for this long, the header shows LINK LOST. */
+const LINK_LOST_AFTER_MS = 5000;
+
+/* =====================================================================================
+   !! CORS — READ THIS BEFORE THE FIRST LIVE TEST !!
+   -------------------------------------------------------------------------------------
+   This page is served from the laptop (file:// or a local http server) and fetches from
+   the robot's IP. Those are CROSS-ORIGIN requests. The browser will silently block them
+   unless every robot HTTP response carries permissive CORS headers:
+
+       Access-Control-Allow-Origin: *
+       Access-Control-Allow-Methods: GET, POST, OPTIONS
+       Access-Control-Allow-Headers: Content-Type
+
+   The robot must also answer OPTIONS preflight requests (for the POST endpoints) with
+   those same headers and a 204. Without this the dashboard shows every panel as
+   "unreachable" and the browser console shows only an opaque "Failed to fetch" /
+   "TypeError: NetworkError" — it will NOT tell you CORS is the reason.
+
+   In Flask:  from flask_cors import CORS; CORS(app)
+   In FastAPI: app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+   ===================================================================================== */
+
+/* =====================================================================================
+   JSON CONTRACT — what this dashboard expects from the robot
+   -------------------------------------------------------------------------------------
+   General rules
+   • All timestamps are Unix epoch MILLISECONDS (integer). The UI computes and displays
+     the age of every value from them, so they must be set from the robot's real clock.
+     Robot and laptop clocks should be roughly in sync (NTP); a skew of a few hundred ms
+     is fine, a skew of seconds will make everything look stale.
+   • Every top-level payload has a "timestamp" field = when the payload was assembled.
+   • Every component/goal/vision record carries its own timestamp as well.
+   • Content-Type: application/json. Errors: any non-2xx status is treated as
+     "endpoint unreachable". A 2xx with a body that fails the shape checks below is
+     treated as "malformed response" (also shown as unreachable, with the reason).
+   • Unknown extra fields are ignored. Missing REQUIRED fields fail the shape check.
+
+   -------------------------------------------------------------------------------------
+   GET /api/state
+   -------------------------------------------------------------------------------------
+   Mission state, target, battery, per-component health.
+
+   {
+     "timestamp": 1757430000000,
+     "mission": {
+       "target": "person in a red jacket",         // string, or null when no target set
+       "target_set_at": 1757429900000,             // ms, or null
+       "zones": [                                  // search zones; order = display order
+         { "id": "A", "status": "cleared"   },     // status: "pending" | "searching" | "cleared"
+         { "id": "B", "status": "searching" },
+         { "id": "C", "status": "pending"   }
+       ],
+       "last_sighting": {                          // null if the target has never been seen
+         "timestamp": 1757429980000,
+         "zone": "B",
+         "map_x": 4.21, "map_y": -1.37,            // metres, map frame
+         "confidence": 0.91
+       },
+       "behavior_mode": "follow",                  // "follow" | "conceal" — the planner's standing
+                                                   //   instruction from the operator. REQUIRED.
+       "behavior_set_at": 1757429900000,           // ms when it was last changed, or null if default
+       "concealment": {                            // is the robot currently hiding?
+         "active": true,
+         "since": 1757429975000,                   // ms, when it reached cover; null when not concealed
+         "spot": "behind pallet rack",             // human-readable; null when not concealed
+         "cover_quality": "good"                   // "good" | "partial" | null — optional
+       }
+     },
+     "battery": {
+       "percent": 87.5,                            // 0–100
+       "voltage": 12.1,                            // optional
+       "timestamp": 1757430000000
+     },
+     "components": {                               // keys are fixed; the UI shows exactly these five
+       "ros2_core":   { "status": "ok",   "last_seen": 1757430000000, "since": 1757420000000 },
+       "planner_llm": { "status": "ok",   "last_seen": 1757429999500, "since": 1757420000000 },
+       "vision_llm":  { "status": "down", "last_seen": 1757429960000, "since": 1757429960000 },
+       "nav2":        { "status": "ok",   "last_seen": 1757430000000, "since": 1757420000000 },
+       "camera":      { "status": "ok",   "last_seen": 1757430000000, "since": 1757420000000 }
+     }
+   }
+   • components.<name>.status: "ok" | "degraded" | "down"
+   • last_seen: last time the robot's supervisor successfully heard from that process.
+   • since: when the component entered its CURRENT status. For "down" the UI shows
+     "down for <now - since>". For "ok" it can show uptime.
+   REQUIRED: timestamp, mission, battery.percent, components
+
+   -------------------------------------------------------------------------------------
+   GET /api/goals
+   -------------------------------------------------------------------------------------
+   The action queue. Active goal, pending queue (sorted by priority desc), recent history.
+
+   {
+     "timestamp": 1757430000000,
+     "active": {                                   // null when nothing is executing
+       "id": "g-0142",
+       "action": "follow_target",                  // ROS2 action name (short form is fine)
+       "params": { "standoff_m": 2.0 },            // free-form object, shown as key=value
+       "priority": 80,                             // integer, higher wins
+       "status": "EXECUTING",
+       "submitted_at": 1757429990000,
+       "accepted_at":  1757429990100,
+       "started_at":   1757429990200,
+       "ttl_deadline": 1757430012000,              // ms, or null if the goal has no TTL
+       "feedback": {                               // free-form; these two keys get bars if present
+         "percent_complete": 42.0,
+         "distance_remaining_m": 3.1
+       }
+     },
+     "queue": [                                    // PENDING / ACCEPTED goals, highest priority first
+       { "id": "g-0143", "action": "investigate_sighting", "params": { "zone": "B" },
+         "priority": 50, "status": "ACCEPTED", "submitted_at": 1757429995000 },
+       { "id": "g-0144", "action": "explore_zone", "params": { "zone": "E" },
+         "priority": 25, "status": "PENDING",  "submitted_at": 1757429996000 }
+     ],
+     "history": [                                  // most recent first; send the last ~10
+       { "id": "g-0141", "action": "explore_zone", "params": { "zone": "D" }, "priority": 30,
+         "status": "SUCCEEDED", "reason": null,
+         "started_at": 1757429950000, "finished_at": 1757429989000 },
+       { "id": "g-0140", "action": "reposition_to_concealment", "params": { "pose": [-3.2, 7.9] },
+         "priority": 60, "status": "REJECTED", "reason": "outside geofence",
+         "started_at": null, "finished_at": 1757429948000 },
+       { "id": "g-0139", "action": "explore_zone", "params": { "zone": "B" }, "priority": 30,
+         "status": "PREEMPTED", "reason": "preempted by follow_target (priority 80)",
+         "started_at": 1757429900000, "finished_at": 1757429930000 },
+       { "id": "g-0138", "action": "follow_target", "params": {}, "priority": 80,
+         "status": "ABORTED", "reason": "TTL expired: no fresh sighting for 15 s",
+         "started_at": 1757429850000, "finished_at": 1757429895000 }
+     ]
+   }
+   • status vocabulary (ROS2 action lifecycle + one convenience state):
+       PENDING, ACCEPTED, EXECUTING, SUCCEEDED, ABORTED, CANCELED, REJECTED, PREEMPTED
+     PREEMPTED is a CANCELED goal whose cause was a higher-priority goal; report it as
+     PREEMPTED so the UI can colour it differently. It is the most important distinction
+     for the operator.
+   • reason: REQUIRED (non-empty string) for ABORTED / CANCELED / REJECTED / PREEMPTED.
+     Examples: "path blocked", "unreachable", "outside geofence", "TTL expired",
+     "preempted by higher priority", "operator recall".
+   REQUIRED: timestamp, active (may be null), queue (array), history (array)
+
+   -------------------------------------------------------------------------------------
+   GET /api/vision
+   -------------------------------------------------------------------------------------
+   Latest result from the vision-language model. Return the LAST result even if it is
+   old — the UI decides staleness from the timestamp. Never return zeros for "no result
+   yet"; return match=false, bbox=null, and the timestamp of the last actual inference.
+
+   {
+     "timestamp": 1757430000000,                   // when THIS inference finished
+     "match": true,
+     "confidence": 0.87,                           // 0.0–1.0
+     "bbox": { "x_min": 0.41, "y_min": 0.22, "x_max": 0.63, "y_max": 0.78 },  // normalised 0–1, or null
+     "frame_id": 51820,                            // optional
+     "model": "LFM2.5-VL-450M-Q4"                  // optional
+   }
+   REQUIRED: timestamp, match (bool), confidence (number)
+
+   -------------------------------------------------------------------------------------
+   GET /camera/stream
+   -------------------------------------------------------------------------------------
+   Either multipart/x-mixed-replace MJPEG (preferred; set CAMERA_REFRESH_MS = 0) or a single
+   image/jpeg per request (set CAMERA_REFRESH_MS to e.g. 1000; the UI appends ?t=<ms>).
+   Keep it small: 640×360 at ≤10 fps is plenty for a monitoring view. Must also send CORS.
+
+   -------------------------------------------------------------------------------------
+   POST /api/target        body: { "target": "person in a red jacket" }
+   -------------------------------------------------------------------------------------
+   Sets the search target. Clears zone status, restarts exploration.
+   Response 200: { "ok": true, "target": "person in a red jacket", "timestamp": 1757430000000 }
+   Response 4xx: { "ok": false, "error": "target description empty" }
+
+   -------------------------------------------------------------------------------------
+   POST /api/behavior      body: { "mode": "follow" }   // "follow" | "conceal"
+   -------------------------------------------------------------------------------------
+   Sets the planner's standing behaviour on contact with the target. This is a POLICY
+   HINT, not a command: the planner still selects goals, priorities and routes, and the
+   safety layer overrides both modes.
+     "follow"  — on a confirmed sighting, pursue and maintain standoff.
+     "conceal" — on a confirmed sighting, move to the nearest concealment point and
+                 observe from cover. Cancels an in-flight follow_target.
+   The robot must reflect the accepted mode back in /api/state -> mission.behavior_mode;
+   the dashboard buttons show THAT value, not the last click, so a refused or ignored
+   request is visible.
+   Response 200: { "ok": true, "mode": "conceal", "timestamp": 1757430000000 }
+   Response 4xx: { "ok": false, "error": "unknown mode: lurk" }
+
+   -------------------------------------------------------------------------------------
+   POST /api/recall        body: {}  (empty object)
+   -------------------------------------------------------------------------------------
+   Cancels the active goal, flushes the queue, clears the target, submits return_home at
+   max priority. Safety layer stays active as always.
+   Response 200: { "ok": true, "goal_id": "g-0150", "timestamp": 1757430000000 }
+   ===================================================================================== */
+</script>
+
+
+<style>
+:root{
+  --bg:#070a08;
+  --panel:#0b110d;
+  --line:#22382a;
+  --green:#4dff8a;
+  --amber:#ffb13b;
+  --red:#ff5560;
+  --text:#c9ecd3;
+  --dim:#6f9c7e;
+  --mute:#3f5c49;
+  --font:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font-family:var(--font);font-size:14px;line-height:1.45;min-height:100vh}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+button{font:inherit;color:inherit;cursor:pointer;background:none}
+.num{font-variant-numeric:tabular-nums}
+
+/* header */
+header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;padding:10px 20px;border-bottom:1px solid var(--line)}
+.brand h1{margin:0;font-size:16px;font-weight:700;color:var(--green)}
+.brand h1 small{color:var(--dim);font-weight:400;font-size:13px;margin-left:10px}
+.link-pill{justify-self:center;display:flex;align-items:center;gap:8px;font-weight:700}
+.link-pill .led{display:none}
+.link-pill::before{content:'['}.link-pill::after{content:']'}
+.link-pill.ok{color:var(--green)}.link-pill.degraded{color:var(--amber)}.link-pill.lost{color:var(--red)}.link-pill.idle{color:var(--dim)}
+.hdr-right{justify-self:end;display:flex;align-items:center;gap:14px;font-size:13px;color:var(--dim)}
+.mode-toggle{display:inline-flex;border:1px solid var(--line)}
+.mode-toggle button{border:0;padding:4px 12px;font-weight:700;color:var(--dim)}
+.mode-toggle button[aria-pressed="true"].mock{background:var(--amber);color:#000}
+.mode-toggle button[aria-pressed="true"].live{background:var(--green);color:#000}
+#clock{min-width:70px;text-align:right}
+
+/* mode strip */
+.mode-strip{display:flex;align-items:center;justify-content:center;gap:12px;padding:5px 16px;font-weight:700;font-size:13px;border-bottom:1px solid var(--line)}
+.mode-strip.mock{color:#000;background:var(--amber)}
+.mode-strip.mock span.tag{background:#000;color:var(--amber);padding:0 8px}
+.mode-strip.live{color:var(--green)}
+.mode-strip.live span.tag{background:var(--green);color:#000;padding:0 8px}
+.mode-strip .url{font-weight:400}
+
+/* grid */
+main{display:grid;gap:12px;padding:12px 20px 24px;grid-template-columns:minmax(300px,2fr) minmax(360px,3fr) minmax(280px,2fr);grid-template-areas:"camera goals mission" "health goals target";grid-template-rows:auto 1fr}
+.panel{position:relative;background:var(--panel);border:1px solid var(--line);padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.panel > h2{margin:0;font-size:13px;font-weight:700;color:var(--green);display:flex;gap:10px}
+.panel > h2 .h-right{margin-left:auto;font-weight:400;color:var(--dim)}
+#p-camera{grid-area:camera}#p-goals{grid-area:goals}#p-mission{grid-area:mission}#p-target{grid-area:target}#p-health{grid-area:health}
+
+/* contact lost */
+.panel .frozen{display:none;position:absolute;inset:0;z-index:5;align-items:center;justify-content:center;pointer-events:none}
+.panel.lost .frozen{display:flex}
+.panel.lost > *:not(.frozen):not(h2){opacity:.25}
+.frozen .stamp{border:2px solid var(--red);color:var(--red);padding:8px 16px;font-weight:700;background:var(--bg);text-align:center}
+.frozen .stamp .num{display:block;margin-top:2px}
+
+/* kv */
+.kv{display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:6px;align-items:baseline;margin:0}
+.kv dt{color:var(--dim)}.kv dd{margin:0;overflow-wrap:anywhere}
+.age{color:var(--mute);font-size:12px;margin-left:8px}
+.age.warn{color:var(--amber)}.age.bad{color:var(--red)}
+.unreach{color:var(--red)}
+.conceal-on{color:var(--green);font-weight:700}
+
+/* camera */
+.cam-frame{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden;border:1px solid var(--line)}
+.cam-frame canvas,.cam-frame img{display:block;width:100%;height:100%;object-fit:cover}
+.cam-frame img{display:none}
+.bbox{position:absolute;border:2px solid var(--green);display:none;pointer-events:none}
+.bbox::after{content:attr(data-label);position:absolute;left:-2px;top:-18px;background:var(--green);color:#000;font-size:11px;padding:0 5px;white-space:nowrap}
+.bbox.stale{border-style:dashed;border-color:var(--dim)}
+.bbox.stale::after{background:var(--dim);color:#000}
+.cam-wm{position:absolute;right:6px;bottom:4px;font-size:11px;color:var(--amber);pointer-events:none;display:none}
+.cam-nosig{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:4px;background:#000;color:var(--red);font-weight:700}
+.cam-nosig small{color:var(--dim);font-weight:400}
+.vision-row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:baseline}
+.chip{font-weight:700}
+.chip::before{content:'['}.chip::after{content:']'}
+.chip.match{color:var(--green)}.chip.nomatch{color:var(--text)}.chip.stale{color:var(--amber)}.chip.dead{color:var(--red)}
+.conf .bar{display:none}
+.vis-age{text-align:right}
+.vis-age b{display:block;font-size:11px;color:var(--dim);font-weight:400}
+
+/* goals */
+.active-goal{padding:12px 14px;border:1px solid var(--green)}
+.active-goal.idle{border-color:var(--line)}
+.ag-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.ag-name{font-size:22px;line-height:1;color:var(--green);font-weight:700}
+.active-goal.idle .ag-name{color:var(--dim);font-size:16px;font-weight:400}
+.pri{font-size:12px;padding:0 6px;background:var(--green);color:#000;font-weight:700}
+.pri.q{background:none;color:var(--dim)}
+.pri.q::before{content:'['}.pri.q::after{content:']'}
+.ag-params{color:var(--dim);margin-top:4px;overflow-wrap:anywhere}
+.ag-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px 16px;margin-top:10px}
+.ag-meta .m b{display:block;font-size:11px;color:var(--dim);font-weight:400}
+.ag-meta .m span{font-size:16px}
+.fb-bar{display:none}
+.ttl{margin-top:10px;display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--dim)}
+.ttl-head{display:contents}
+.ttl-head span{font-size:16px;color:var(--text)}
+.fuse{display:none}
+.sub-h{margin:4px 0 0;font-size:12px;font-weight:700;color:var(--dim);display:flex;justify-content:space-between}
+.sub-h .num{color:var(--mute);font-weight:400}
+.qlist,.hlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.qlist li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:4px 0;border-bottom:1px dotted var(--line)}
+.qlist li .st{color:var(--dim);font-size:12px}
+.empty{color:var(--mute);padding:4px 0}
+.hlist li{display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px dotted var(--line)}
+.hlist .state{font-weight:700;font-size:12px;display:flex;gap:6px}
+.hlist .state i{font-style:normal;width:12px;text-align:center}
+.hlist .body{min-width:0}
+.hlist .body .why{display:block;font-size:12px}
+.hlist .when{font-size:12px;color:var(--mute);white-space:nowrap}
+.s-SUCCEEDED .state{color:var(--green)}
+.s-ABORTED .state,.s-REJECTED .state{color:var(--red)}
+.s-CANCELED .state{color:var(--amber)}
+.s-PREEMPTED .state{color:var(--dim)}
+.s-ABORTED .why,.s-REJECTED .why{color:var(--red)}
+.s-CANCELED .why{color:var(--amber)}
+.s-PREEMPTED .why,.s-SUCCEEDED .why{color:var(--dim)}
+
+/* mission */
+.doing{font-size:18px;font-weight:700;color:var(--green)}
+.doing::before{content:'> '}
+.doing.none{color:var(--dim);font-weight:400}
+.zones{display:flex;flex-wrap:wrap;gap:8px}
+.zone{color:var(--dim)}
+.zone::before{content:'['}.zone::after{content:']'}
+.zone.cleared{color:var(--green)}.zone.searching{color:var(--amber)}
+.batt{display:flex;align-items:baseline;gap:10px}
+.batt .cell{display:none}
+.batt.low .num{color:var(--amber)}.batt.crit .num{color:var(--red)}
+
+/* target */
+.tgt-row{display:flex;gap:8px}
+.tgt-row input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--text);font:inherit;padding:8px 10px}
+.tgt-row input::placeholder{color:var(--mute)}
+.btn{border:1px solid var(--green);color:var(--green);padding:8px 14px;font-weight:700}
+.btn:disabled{opacity:.45;cursor:progress}
+.btn.recall{width:100%;border-color:var(--red);color:var(--red);padding:12px}
+.tgt-msg{font-size:12px;min-height:1.2em;color:var(--dim)}
+.tgt-msg.ok{color:var(--green)}.tgt-msg.err{color:var(--red)}
+
+.beh-label{font-size:11px;color:var(--dim);margin-top:2px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg-btn{border-color:var(--line);color:var(--dim);text-align:center}
+.seg-btn.on{border-color:var(--green);color:#000;background:var(--green)}
+.seg-btn:disabled{opacity:.5;cursor:progress}
+.readonly-note{font-size:12px;color:var(--mute);margin:0}
+
+/* health */
+.hlt{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.hlt li{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dotted var(--line)}
+.hlt .led{display:none}
+.hlt .name small{display:block;font-size:11px;color:var(--mute)}
+.hlt .stat{text-align:right;font-size:13px}
+.hlt .ok .stat{color:var(--green)}.hlt .down .stat{color:var(--red)}.hlt .degraded .stat{color:var(--amber)}.hlt .unknown .stat{color:var(--dim)}
+.hlt .stat small{display:block;font-size:11px;color:var(--mute)}
+.ep li{font-size:12px}
+
+/* setup */
+footer{padding:0 20px 30px;color:var(--dim);font-size:13px;max-width:900px}
+footer details{border:1px solid var(--line);padding:10px 14px}
+footer summary{cursor:pointer;font-weight:700;color:var(--text)}
+footer code{color:var(--green)}
+footer ol{padding-left:20px;line-height:1.5}
+
+/* responsive */
+@media (max-width:1180px){main{grid-template-columns:1fr 1fr;grid-template-areas:"camera goals" "mission goals" "health target";grid-template-rows:auto auto auto}}
+@media (max-width:760px){
+  header{grid-template-columns:1fr auto;grid-template-areas:"brand right" "pill pill";gap:8px;padding:10px 12px}
+  .brand{grid-area:brand}.link-pill{grid-area:pill;justify-self:center}.hdr-right{grid-area:right}
+  #clock,#hdr-url{display:none}
+  main{grid-template-columns:1fr;grid-template-areas:"camera" "goals" "mission" "target" "health";padding:10px 12px}
+  .hlist li{grid-template-columns:100px 1fr}.hlist .when{grid-column:2}
+  footer{padding:0 12px 30px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>PEARL UI<small>remote monitor</small></h1>
+  </div>
+  <div class="link-pill idle" id="linkpill"><span class="led"></span><span id="linktext">CONNECTING</span></div>
+  <div class="hdr-right">
+    <span id="hdr-url" class="num"></span>
+    <div class="mode-toggle" role="group" aria-label="Data source">
+      <button class="mock" id="btn-mock" aria-pressed="true">MOCK</button>
+      <button class="live" id="btn-live" aria-pressed="false">LIVE</button>
+    </div>
+    <span id="clock" class="num"></span>
+  </div>
+</header>
+<div class="mode-strip mock" id="modestrip"></div>
+
+<main>
+  <!-- ===== CAMERA ===== -->
+  <section class="panel" id="p-camera">
+    <h2>Camera <span class="h-right num" id="cam-src"></span></h2>
+    <div class="cam-frame">
+      <canvas id="cam-canvas" width="640" height="360"></canvas>
+      <img id="cam-img" alt="Robot camera stream">
+      <div class="bbox" id="bbox" data-label=""></div>
+      <div class="cam-wm" id="cam-wm">SIMULATED FEED</div>
+      <div class="cam-nosig" id="cam-nosig">NO SIGNAL<small id="cam-nosig-why"></small></div>
+    </div>
+    <div class="vision-row" id="vision-row">
+      <span class="chip" id="v-chip">—</span>
+      <div class="conf"><span id="v-conf">confidence —</span><div class="bar"><i id="v-conf-bar"></i></div></div>
+      <div class="vis-age"><b>last check</b><span id="v-age">—</span></div>
+    </div>
+    <div class="frozen"><div class="stamp">CONTACT LOST<span class="num" id="frz-camera"></span></div></div>
+  </section>
+
+  <!-- ===== ACTION QUEUE ===== -->
+  <section class="panel" id="p-goals">
+    <h2>Action queue <span class="h-right num" id="goals-age"></span></h2>
+    <div class="active-goal idle" id="active">
+      <div class="ag-top"><span class="ag-name" id="ag-name">no active goal</span><span class="pri" id="ag-pri" hidden></span><span class="num" id="ag-id" style="color:var(--mute);font-size:13px"></span></div>
+      <div class="ag-params" id="ag-params"></div>
+      <div class="ag-meta" id="ag-meta"></div>
+      <div class="ttl" id="ag-ttl" hidden>
+        <div class="ttl-head"><b>TTL — auto-abort when evidence goes stale</b><span id="ttl-num"></span></div>
+        <div class="fuse" id="fuse"><i></i></div>
+      </div>
+    </div>
+    <h3 class="sub-h">Queued <span class="num" id="q-count"></span></h3>
+    <ul class="qlist" id="qlist"></ul>
+    <h3 class="sub-h">Recent history <span class="num">last 10</span></h3>
+    <ul class="hlist" id="hlist"></ul>
+    <div class="frozen"><div class="stamp">CONTACT LOST<span class="num" id="frz-goals"></span></div></div>
+  </section>
+
+  <!-- ===== MISSION ===== -->
+  <section class="panel" id="p-mission">
+    <h2>Mission <span class="h-right num" id="state-age"></span></h2>
+    <div class="doing none" id="doing">—</div>
+    <dl class="kv">
+      <dt>Target</dt><dd id="m-target">—</dd>
+      <dt>Zones</dt><dd><div class="zones" id="zones"></div></dd>
+      <dt>Last sighting</dt><dd id="m-sight">—</dd>
+      <dt>Cover</dt><dd id="m-conceal">—</dd>
+      <dt>Battery</dt><dd><div class="batt" id="batt"><div class="cell"><i id="batt-fill"></i></div><span class="num" id="batt-num">—</span><span class="age" id="batt-age"></span></div></dd>
+      <dt>Robot link</dt><dd id="m-link">—</dd>
+    </dl>
+    <div class="frozen"><div class="stamp">CONTACT LOST<span class="num" id="frz-mission"></span></div></div>
+  </section>
+
+  <!-- ===== TARGET ===== -->
+  <section class="panel" id="p-target">
+    <h2>Target</h2>
+    <div class="tgt-row">
+      <input id="tgt-input" type="text" placeholder="e.g. person in a red jacket" autocomplete="off" maxlength="200">
+      <button class="btn" id="btn-set">SET TARGET</button>
+    </div>
+    <div class="tgt-msg" id="tgt-msg"></div>
+    <div class="beh-label">Behaviour on contact</div>
+    <div class="seg" role="group" aria-label="Behaviour on contact">
+      <button class="btn seg-btn" id="btn-follow" aria-pressed="false">FOLLOW</button>
+      <button class="btn seg-btn" id="btn-conceal" aria-pressed="false">HIDE</button>
+    </div>
+    <div class="tgt-msg" id="beh-msg"></div>
+    <button class="btn recall" id="btn-recall">RECALL / STOP</button>
+    <p class="readonly-note">This dashboard does not drive the robot. Setting a target starts autonomous search; recall cancels everything and returns home. FOLLOW / HIDE is a standing instruction to the planner — it still chooses its own goals and routes, and the safety layer overrides both.</p>
+  </section>
+
+  <!-- ===== HEALTH ===== -->
+  <section class="panel" id="p-health">
+    <h2>Health</h2>
+    <ul class="hlt" id="hlt"></ul>
+    <h3 class="sub-h">Dashboard → robot endpoints</h3>
+    <ul class="hlt ep" id="eplist"></ul>
+    <div class="frozen"><div class="stamp">CONTACT LOST<span class="num" id="frz-health"></span></div></div>
+  </section>
+</main>
+
+<footer>
+  <details>
+    <summary>Setup &amp; backend notes</summary>
+    <ol>
+      <li>Open this file in a browser. It starts in <b>MOCK</b> mode with a scripted ~4-minute simulation that loops. Nothing is fetched from the network in mock mode.</li>
+      <li>To go live: set <code>ROBOT_BASE_URL</code> in the first <code>&lt;script&gt;</code> block, reload, click <b>LIVE</b>. Live mode is auto-reset to mock on every page load so a stale demo never masquerades as real.</li>
+      <li><b>CORS is mandatory.</b> The robot's HTTP server must return <code>Access-Control-Allow-Origin: *</code> (plus <code>-Methods</code> and <code>-Headers</code>) on every response and answer <code>OPTIONS</code> preflights. Otherwise every panel reads "unreachable" and the browser console says only "Failed to fetch".</li>
+      <li>Endpoints: <code>GET /api/state</code>, <code>GET /api/goals</code>, <code>GET /api/vision</code>, <code>GET /camera/stream</code>, <code>POST /api/target</code>, <code>POST /api/behavior</code>, <code>POST /api/recall</code>. Full payload shapes with examples are in the comment block at the top of this file.</li>
+      <li>Polling is every <code id="ft-poll"></code> ms with a <code id="ft-to"></code> ms timeout. The Pi is busy; do not lower these.</li>
+    </ol>
+  </details>
+</footer>
+
+<script>
+/* =====================================================================================
+   APPLICATION
+   ===================================================================================== */
+'use strict';
+const now = () => Date.now();
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function fmtAge(ms){
+  if (ms == null || !isFinite(ms)) return '—';
+  if (ms < 0) ms = 0;
+  const s = ms/1000;
+  if (s < 10) return s.toFixed(1)+'s';
+  if (s < 60) return Math.floor(s)+'s';
+  const m = Math.floor(s/60), r = Math.floor(s%60);
+  if (m < 60) return m+'m'+String(r).padStart(2,'0')+'s';
+  return Math.floor(m/60)+'h'+String(m%60).padStart(2,'0')+'m';
+}
+function fmtParams(p){
+  if (!p || typeof p !== 'object') return '';
+  const ks = Object.keys(p); if (!ks.length) return '';
+  return ks.map(k => k+'='+(Array.isArray(p[k]) ? '['+p[k].join(', ')+']' : String(p[k]))).join('  ');
+}
+const ACTION_TEXT = {
+  explore_zone: g => 'Exploring zone '+(g.params&&g.params.zone!=null ? g.params.zone : '?')+(g.params&&g.params.reroute?' (rerouted)':''),
+  follow_target: () => 'Following target',
+  reposition_to_concealment: () => 'Repositioning to concealment',
+  investigate_sighting: g => 'Investigating sighting'+(g.params&&g.params.zone?' in zone '+g.params.zone:''),
+  return_home: () => 'Returning to base',
+};
+const STATE_GLYPH = {SUCCEEDED:'✓',ABORTED:'✕',CANCELED:'■',REJECTED:'⊘',PREEMPTED:'↯'};
+const COMPONENTS = [
+  ['ros2_core','ROS2 core','rclpy daemon / action servers'],
+  ['planner_llm','Planner model','LFM2.5-230M · llama.cpp'],
+  ['vision_llm','Vision model','LFM2.5-VL-450M · llama.cpp'],
+  ['nav2','Nav2','path planning / controller'],
+  ['camera','Camera stream','MJPEG server'],
+];
+
+
+/* Colour vocabulary for the simulated scene. Mock mode only — the real robot's VLM
+   parses the description itself; here we just need the synthetic person to match
+   whatever the operator typed so the demo is honest about what it is testing. */
+const COLOR_WORDS = {
+  red:'#c8242f', crimson:'#b0142a', scarlet:'#d22a28', maroon:'#7a1420', burgundy:'#6e1426',
+  blue:'#2a6fd6', navy:'#1b3b7a', teal:'#1f9c9c', cyan:'#28c8d8', turquoise:'#2fc2b4',
+  green:'#2fa34a', lime:'#7ad13b', olive:'#6b7a2a', emerald:'#25a06a',
+  yellow:'#ddc12a', gold:'#d4a520', mustard:'#c79a1e',
+  orange:'#e07a1f', purple:'#7a3fbf', violet:'#8a4fd0', lilac:'#a889d6',
+  magenta:'#c02f9c', pink:'#e07aa8', white:'#e6e8e6', grey:'#8a8f92', gray:'#8a8f92',
+  silver:'#b0b4b8', black:'#1b1c1e', brown:'#6b4526', tan:'#b08a5e', beige:'#cdbb96', khaki:'#a89a63'
+};
+const GARMENT_WORDS = ['jacket','coat','shirt','t-shirt','tshirt','hoodie','jumper','sweater','vest','top','dress','overalls','hi-vis','uniform'];
+const DEFAULT_FIGURE = {color:'#8a8f92', colorName:'unspecified', garment:'clothing'};
+function parseTarget(desc){
+  if (!desc) return {...DEFAULT_FIGURE};
+  const s=String(desc).toLowerCase();
+  let color=null,colorName=null;
+  for (const k in COLOR_WORDS){ if (new RegExp('\\b'+k+'\\b').test(s)){ color=COLOR_WORDS[k]; colorName=k; break; } }
+  let garment=null;
+  for (const gword of GARMENT_WORDS){ if (s.includes(gword)){ garment=gword; break; } }
+  return {color: color||DEFAULT_FIGURE.color, colorName: colorName||'unspecified', garment: garment||'clothing'};
+}
+/* A distractor is a person who is NOT the target — how the vision model earns its
+   "no match". Its colour is always different from the target's. */
+function distractorColor(targetHex){
+  const pool=['#2a6fd6','#2fa34a','#ddc12a','#e6e8e6','#6b4526','#7a3fbf'];
+  const pick=pool.filter(c=>c!==targetHex);
+  return pick[Math.floor(Math.random()*pick.length)];
+}
+const CONCEAL_SPOTS = ['behind pallet rack','behind doorway pillar','behind stacked crates','behind workbench'];
+
+/* -------------------------------------------------------------------------------------
+   MOCK ROBOT — stateful simulation. Same interface as the live robot, including failures.
+   ------------------------------------------------------------------------------------- */
+class MockRobot {
+  constructor(){ this.hardReset(); }
+  hardReset(){
+    this.loopLen = 240;              // seconds per scripted loop
+    this.loopStart = now();
+    this.fired = new Set();
+    this.battery = 93.4;
+    this.target = 'person in a red jacket';
+    this.targetSetAt = now() - 90_000;
+    this.zones = ['A','B','C','D','E'].map(id => ({id, status:'pending'}));
+    this.lastSighting = null;
+    this.currentZone = null;
+    this.components = {};
+    for (const [k] of COMPONENTS) this.components[k] = {status:'ok', last_seen:now(), since:now()-3_600_000};
+    this.active = null; this.queue = []; this.history = [];
+    this.nextId = 1;
+    this.visionMode = 'nomatch';     // 'nomatch' | 'match' | 'gap'
+    this.vision = {timestamp: now()-1200, match:false, confidence:0.08, bbox:null, frame_id:1000, model:'LFM2.5-VL-450M-Q4'};
+    this.nextVisionAt = now()+800;
+    this.linkDown = false;
+    this.targetPos = {x:0.55, y:0.52};
+    this.figure = parseTarget(this.target);
+    this.distractor = {visible:false, color:'#2a6fd6', x:0.3};
+    this.concealment = {active:false, since:null, spot:null, cover_quality:null};
+    this.behaviorMode = 'follow';
+    this.behaviorSetAt = null;
+    this.behaviorByOperator = false;
+    this.frameId = 1000;
+  }
+  t(){ return (now()-this.loopStart)/1000; }
+
+  /* --- goal lifecycle --- */
+  submit(action, params, priority, opt={}){
+    const g = {
+      id:'g-'+String(this.nextId++).padStart(4,'0'), action, params, priority,
+      status:'PENDING', submitted_at:now(), accepted_at:null, started_at:null, finished_at:null,
+      ttl_s: opt.ttl||null, ttl_deadline:null, reason:null,
+      feedback:null, _dur:opt.duration||20, _dist:opt.dist||10,
+    };
+    if (opt.reject){ g.status='REJECTED'; g.reason=opt.reject; g.finished_at=now(); this.pushHistory(g); return g; }
+    g.status='ACCEPTED'; g.accepted_at=now();
+    if (!this.active) this.start(g);
+    else if (priority > this.active.priority){
+      const old=this.active; this.finish(old,'PREEMPTED','preempted by '+action+' (priority '+priority+')', false);
+      this.start(g);
+    } else { this.queue.push(g); this.queue.sort((a,b)=>b.priority-a.priority || a.submitted_at-b.submitted_at); }
+    return g;
+  }
+  start(g){
+    g.status='EXECUTING'; g.started_at=now();
+    g.ttl_deadline = g.ttl_s ? now()+g.ttl_s*1000 : null;
+    g.feedback = {percent_complete:0, distance_remaining_m:g._dist};
+    this.active = g;
+    if (g.action!=='reposition_to_concealment') this.breakCover();
+    if (g.action==='explore_zone'){ this.currentZone=g.params.zone; const z=this.zones.find(z=>z.id===g.params.zone); if(z) z.status='searching'; }
+  }
+  finish(g, status, reason, startNext=true){
+    g.status=status; g.reason=reason||null; g.finished_at=now();
+    if (g.action==='reposition_to_concealment' && status==='SUCCEEDED') this.enterCover(g.params && g.params.spot);
+    if (g.action==='explore_zone'){ const z=this.zones.find(z=>z.id===g.params.zone); if(z) z.status = status==='SUCCEEDED'?'cleared':'pending'; }
+    this.pushHistory(g);
+    if (this.active===g) this.active=null;
+    if (startNext) this.startNext();
+  }
+  pushHistory(g){ this.history.unshift(g); if (this.history.length>10) this.history.length=10; }
+  startNext(){ if (!this.active && this.queue.length) this.start(this.queue.shift()); }
+  abortActive(reason){ if (this.active) this.finish(this.active,'ABORTED',reason); }
+  cancelActive(reason){ if (this.active) this.finish(this.active,'CANCELED',reason); }
+
+  /* Fraction of the camera view taken up by foreground cover: 0 = fully exposed,
+     1 = fully behind cover. Ramps up while a reposition goal executes. */
+  coverFraction(){
+    if (this.concealment.active) return 0.36;
+    const a=this.active;
+    if (a && a.action==='reposition_to_concealment' && a.feedback) return 0.36*clamp(a.feedback.percent_complete/100,0,1);
+    return 0;
+  }
+  breakCover(){ if (this.concealment.active){ this.concealment={active:false, since:null, spot:null, cover_quality:null}; } }
+  enterCover(spot){ this.concealment={active:true, since:now(), spot:spot||CONCEAL_SPOTS[Math.floor(Math.random()*CONCEAL_SPOTS.length)], cover_quality:'good'}; }
+
+
+  /* Operator behaviour preference. This is a STANDING INSTRUCTION to the planner, not a
+     manual control: the planner still chooses goals, priorities and routes, and the
+     safety layer still overrides everything. The robot reports the mode it is actually
+     in via /api/state, which is what the buttons reflect. */
+  setBehavior(mode){
+    if (mode!=='follow' && mode!=='conceal') return {ok:false, error:'unknown mode: '+mode};
+    this.behaviorMode=mode; this.behaviorSetAt=now(); this.behaviorByOperator=true;
+    if (mode==='conceal'){
+      if (this.active && this.active.action!=='reposition_to_concealment') this.finish(this.active,'CANCELED','operator behaviour: conceal', false);
+      for (const q of this.queue){ q.status='CANCELED'; q.reason='operator behaviour: conceal'; q.finished_at=now(); this.pushHistory(q); }
+      this.queue.length=0;
+      if (!this.concealment.active) this.submit('reposition_to_concealment',{pose:[2.1,4.4],spot:'behind pallet rack'},70,{duration:12,dist:4.4});
+    } else {
+      this.breakCover();
+      if (this.active && this.active.action==='reposition_to_concealment') this.finish(this.active,'CANCELED','operator behaviour: follow', false);
+      if (!this.active){
+        if (this.lastSighting) this.submit('follow_target',{standoff_m:2.0},70,{duration:600,dist:4.2,ttl:15});
+        else this.submit('explore_zone',{zone:'A'},70,{duration:20,dist:8.5});
+      }
+    }
+    return {ok:true, mode, timestamp:now()};
+  }
+
+  setComponent(k, status){ const c=this.components[k]; if (c.status!==status){ c.status=status; c.since=now(); } }
+
+  /* --- operator actions --- */
+  setTarget(desc){
+    this.target=desc; this.targetSetAt=now(); this.lastSighting=null;
+    this.figure=parseTarget(desc); this.breakCover();
+    this.distractor.color=distractorColor(this.figure.color);
+    this.visionMode='nomatch';
+    for (const z of this.zones) z.status='pending';
+    if (this.active) this.finish(this.active,'CANCELED','new target set by operator', false);
+    this.queue.length=0;
+    this.submit('explore_zone',{zone:'A'},30,{duration:19,dist:8.5});
+    return {ok:true, target:desc, timestamp:now()};
+  }
+  recall(){
+    if (this.active) this.finish(this.active,'CANCELED','operator recall', false);
+    for (const q of this.queue){ q.status='CANCELED'; q.reason='operator recall'; q.finished_at=now(); this.pushHistory(q); }
+    this.queue.length=0; this.target=null; this.breakCover();
+    this.behaviorMode='follow'; this.behaviorByOperator=false; this.behaviorSetAt=null;
+    const g=this.submit('return_home',{},100,{duration:25,dist:15.2});
+    return {ok:true, goal_id:g.id, timestamp:now()};
+  }
+
+  /* --- per-frame advance --- */
+  tick(){
+    const t=this.t(), ts=now();
+    if (t >= this.loopLen){ this.loopStart=ts; this.fired.clear(); return; }
+    for (let i=0;i<SCRIPT.length;i++){ const [at,fn]=SCRIPT[i]; if (t>=at && !this.fired.has(i)){ this.fired.add(i); fn(this); } }
+
+    // battery: ~0.7 %/min, swap when empty
+    this.battery -= 0.0117*(POLL_TICK_MS/1000); if (this.battery<8) this.battery=96.2;
+
+    // components heartbeat
+    for (const k in this.components){ const c=this.components[k]; if (c.status!=='down') c.last_seen=ts; }
+
+    // vision inference every ~1.6 s (unless gap / model down)
+    const visionUp = this.components.vision_llm.status!=='down' && this.visionMode!=='gap';
+    if (visionUp && ts>=this.nextVisionAt){
+      this.nextVisionAt = ts + 1300 + Math.random()*700;
+      this.frameId++;
+      if (this.visionMode==='match'){
+        this.targetPos.x = clamp(this.targetPos.x + (Math.random()-0.5)*0.05, 0.15, 0.85);
+        this.targetPos.y = clamp(this.targetPos.y + (Math.random()-0.5)*0.02, 0.4, 0.6);
+        const w=0.13+Math.random()*0.02, h=0.42+Math.random()*0.03;
+        let conf = clamp(0.72 + Math.random()*0.24, 0, 0.99);
+        if (this.concealment.active) conf = clamp(conf*0.82, 0, 0.99);   // partial occlusion from cover
+        this.vision = {timestamp:ts, match:true, confidence:conf, frame_id:this.frameId, model:'LFM2.5-VL-450M-Q4',
+          bbox:{x_min:this.targetPos.x-w/2, y_min:this.targetPos.y-h/2, x_max:this.targetPos.x+w/2, y_max:this.targetPos.y+h/2}};
+        this.lastSighting = {timestamp:ts, zone:this.currentZone||'?', map_x:+(2.4+this.targetPos.x*6).toFixed(2), map_y:+(-1.1+this.targetPos.y*3).toFixed(2), confidence:conf};
+        if (this.active && this.active.ttl_s) this.active.ttl_deadline = ts + this.active.ttl_s*1000;   // fresh evidence renews TTL
+      } else {
+        this.distractor.visible = Math.random() < 0.55;
+        if (this.distractor.visible) this.distractor.x = clamp(this.distractor.x + (Math.random()-0.5)*0.12, 0.2, 0.8);
+        this.vision = {timestamp:ts, match:false, confidence:+(0.04+Math.random()*0.25).toFixed(3), bbox:null, frame_id:this.frameId, model:'LFM2.5-VL-450M-Q4'};
+      }
+    }
+
+    // active goal progress
+    const g=this.active;
+    if (g){
+      const p = clamp((ts-g.started_at)/(g._dur*1000), 0, 1);
+      g.feedback.percent_complete = +(Math.min(99.5, p*100)).toFixed(1);
+      g.feedback.distance_remaining_m = +(g._dist*(1-p)).toFixed(2);
+      if (g.ttl_deadline && ts>g.ttl_deadline) this.finish(g,'ABORTED','TTL expired: no fresh sighting for '+g.ttl_s+' s');
+      else if (p>=1) this.finish(g,'SUCCEEDED',null);
+    }
+  }
+
+  /* --- endpoint payloads (mirror the JSON contract exactly) --- */
+  guard(){ if (this.linkDown) throw new Error('connection refused (simulated link loss)'); }
+  pubGoal(g){
+    const o={id:g.id, action:g.action, params:g.params, priority:g.priority, status:g.status, submitted_at:g.submitted_at,
+      accepted_at:g.accepted_at, started_at:g.started_at, finished_at:g.finished_at, ttl_deadline:g.ttl_deadline, reason:g.reason};
+    if (g.feedback) o.feedback={...g.feedback};
+    return o;
+  }
+  statePayload(){
+    const ts=now(), comps={};
+    for (const k in this.components) comps[k]={...this.components[k]};
+    return {timestamp:ts,
+      mission:{target:this.target, target_set_at:this.target?this.targetSetAt:null, zones:this.zones.map(z=>({...z})), last_sighting:this.lastSighting?{...this.lastSighting}:null, concealment:{...this.concealment}, behavior_mode:this.behaviorMode, behavior_set_at:this.behaviorSetAt},
+      battery:{percent:+this.battery.toFixed(1), voltage:+(11.1+this.battery/100*1.5).toFixed(2), timestamp:ts},
+      components:comps};
+  }
+  goalsPayload(){ return {timestamp:now(), active:this.active?this.pubGoal(this.active):null, queue:this.queue.map(g=>this.pubGoal(g)), history:this.history.map(g=>this.pubGoal(g))}; }
+  visionPayload(){ return {...this.vision, bbox:this.vision.bbox?{...this.vision.bbox}:null}; }
+}
+const POLL_TICK_MS = 250;
+
+/* Scripted scenario, seconds into each loop. Exercises every UI state. */
+const SCRIPT = [
+  [0,   s=>{ if(!s.target){ s.target='person in a red jacket'; s.targetSetAt=now(); } for(const z of s.zones) z.status='pending'; s.visionMode='nomatch';
+            if(!s.active) s.submit('explore_zone',{zone:'A'},30,{duration:19,dist:8.5}); }],
+  [20,  s=>s.submit('explore_zone',{zone:'B'},30,{duration:25,dist:11.0})],
+  [27,  s=>s.visionMode='match'],
+  [30,  s=>s.behaviorMode==='conceal' ? s.submit('reposition_to_concealment',{pose:[2.1,4.4],spot:'behind pallet rack'},80,{duration:12,dist:4.4})
+                                     : s.submit('follow_target',{standoff_m:2.0},80,{duration:600,dist:4.2,ttl:15})],   // preempts explore B
+  [40,  s=>s.visionMode='gap'],                                                              // vision goes silent → stale → TTL expiry ≈ t55
+  [57,  s=>s.visionMode='nomatch'],
+  [58,  s=>s.submit('explore_zone',{zone:'C'},30,{duration:30,dist:14.0})],
+  [66,  s=>s.abortActive('path blocked by obstacle (lidar 0.31 m)')],
+  [68,  s=>s.submit('explore_zone',{zone:'C',reroute:true},30,{duration:18,dist:9.7})],
+  [88,  s=>s.submit('reposition_to_concealment',{pose:[-3.2,7.9]},60,{reject:'outside geofence'})],
+  [90,  s=>{ s.submit('explore_zone',{zone:'D'},55,{duration:28,dist:12.3});
+             s.submit('explore_zone',{zone:'E'},25,{duration:24,dist:10.0});
+             s.submit('investigate_sighting',{zone:'B'},50,{duration:14,dist:6.1}); }],       // queue shows priority ordering
+  [100, s=>s.setComponent('vision_llm','down')],                                              // component outage
+  [116, s=>s.setComponent('vision_llm','ok')],
+  [126, s=>s.visionMode='match'],
+  [140, s=>s.behaviorMode==='conceal' ? s.submit('reposition_to_concealment',{pose:[2.1,4.4],spot:'behind stacked crates'},80,{duration:12,dist:4.4})
+                                      : s.submit('follow_target',{standoff_m:2.0},80,{duration:600,dist:3.8,ttl:15})],   // preempts explore E
+  [158, s=>{ if (s.behaviorByOperator && s.behaviorMode==='follow') return; s.cancelActive('planner: target stationary, requesting concealment'); }],
+  [159, s=>{ if (s.behaviorByOperator && s.behaviorMode==='follow') return; s.submit('reposition_to_concealment',{pose:[2.1,4.4],spot:'behind pallet rack'},60,{duration:16,dist:5.5}); }],
+  // ~t175 the goal succeeds and the robot is IN COVER: watch the camera view narrow,
+  // the CONCEALED banner appear, and vision confidence drop from partial occlusion.
+  [196, s=>s.visionMode='nomatch'],
+  [200, s=>s.linkDown=true],                                                                  // total loss of contact
+  [218, s=>s.linkDown=false],
+  [222, s=>s.submit('explore_zone',{zone:'E'},25,{duration:16,dist:8.0})],                    // breaks cover
+];
+
+/* -------------------------------------------------------------------------------------
+   DATA SOURCES — identical interface. Mock throws exactly like a dead network would.
+   ------------------------------------------------------------------------------------- */
+const sim = new MockRobot();
+const mockSource = {
+  name:'mock',
+  getState(){ sim.guard(); return Promise.resolve(sim.statePayload()); },
+  getGoals(){ sim.guard(); return Promise.resolve(sim.goalsPayload()); },
+  getVision(){ sim.guard(); return Promise.resolve(sim.visionPayload()); },
+  setTarget(d){ sim.guard(); return Promise.resolve(sim.setTarget(d)); },
+  recall(){ sim.guard(); return Promise.resolve(sim.recall()); },
+  setBehavior(m){ sim.guard(); return Promise.resolve(sim.setBehavior(m)); },
+};
+async function fetchJSON(path, init){
+  const ctl = new AbortController(); const to = setTimeout(()=>ctl.abort(), REQUEST_TIMEOUT_MS);
+  let res;
+  try { res = await fetch(ROBOT_BASE_URL+path, {...init, signal:ctl.signal, cache:'no-store'}); }
+  catch(e){ clearTimeout(to); throw new Error(e.name==='AbortError' ? 'timeout after '+REQUEST_TIMEOUT_MS+' ms' : 'unreachable (network/CORS): '+e.message); }
+  clearTimeout(to);
+  if (!res.ok) throw new Error('HTTP '+res.status);
+  let j; try { j = await res.json(); } catch(e){ throw new Error('malformed: not JSON'); }
+  return j;
+}
+const liveSource = {
+  name:'live',
+  getState(){ return fetchJSON('/api/state'); },
+  getGoals(){ return fetchJSON('/api/goals'); },
+  getVision(){ return fetchJSON('/api/vision'); },
+  setTarget(d){ return fetchJSON('/api/target',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:d})}); },
+  recall(){ return fetchJSON('/api/recall',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); },
+  setBehavior(m){ return fetchJSON('/api/behavior',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}); },
+};
+/* shape validators: a 2xx with the wrong shape is "malformed", never a blank panel */
+const isNum = v => typeof v==='number' && isFinite(v);
+function vState(o){
+  // battery.percent may be null = unknown (the real robot has no battery topic)
+  if (!o||typeof o!=='object'||!isNum(o.timestamp)||!o.mission||typeof o.mission!=='object'||!o.battery||!(isNum(o.battery.percent)||o.battery.percent===null)||!o.components||typeof o.components!=='object')
+    throw new Error('malformed /api/state payload'); return o;
+}
+function vGoals(o){
+  if (!o||typeof o!=='object'||!isNum(o.timestamp)||!('active' in o)||!Array.isArray(o.queue)||!Array.isArray(o.history))
+    throw new Error('malformed /api/goals payload'); return o;
+}
+function vVision(o){
+  if (!o||typeof o!=='object'||!isNum(o.timestamp)||typeof o.match!=='boolean'||!isNum(o.confidence))
+    throw new Error('malformed /api/vision payload'); return o;
+}
+
+/* -------------------------------------------------------------------------------------
+   POLLER — tracks per-endpoint health; never blanks the UI on failure
+   ------------------------------------------------------------------------------------- */
+let mode = DEFAULT_MODE;
+const data = {state:null, goals:null, vision:null};
+const link = {
+  state:{ok:null,lastOk:0,err:''}, goals:{ok:null,lastOk:0,err:''}, vision:{ok:null,lastOk:0,err:''},
+  lastAnyOk:0, firstAttempt:0,
+};
+const src = () => mode==='mock' ? mockSource : liveSource;
+async function callEp(key, fn, validate){
+  try { const r = validate(await fn()); data[key]=r; link[key]={ok:true,lastOk:now(),err:''}; link.lastAnyOk=now(); }
+  catch(e){ link[key]={ok:false,lastOk:link[key].lastOk,err:e.message||String(e)}; }
+}
+let polling=false;
+async function poll(){
+  if (polling) return; polling=true;
+  const s=src(); if (!link.firstAttempt) link.firstAttempt=now();
+  await Promise.all([callEp('state',()=>s.getState(),vState), callEp('goals',()=>s.getGoals(),vGoals), callEp('vision',()=>s.getVision(),vVision)]);
+  polling=false; render();
+}
+function linkStatus(){
+  const eps=[link.state,link.goals,link.vision];
+  const anyOk = eps.some(e=>e.ok===true), allFail = eps.every(e=>e.ok===false);
+  if (allFail){ const since = link.lastAnyOk || link.firstAttempt; if (now()-since >= LINK_LOST_AFTER_MS) return {s:'lost', since}; return {s:'degraded', since}; }
+  if (anyOk && eps.some(e=>e.ok===false)) return {s:'degraded', since:link.lastAnyOk};
+  if (anyOk) return {s:'ok', since:link.lastAnyOk};
+  return {s:'idle', since:0};
+}
+
+/* -------------------------------------------------------------------------------------
+   RENDER
+   ------------------------------------------------------------------------------------- */
+const $ = id => document.getElementById(id);
+function setAge(el, ts, warnMs, badMs){
+  if (!ts){ el.textContent=''; return; }
+  const a=now()-ts; el.textContent=fmtAge(a)+' ago'; el.className='age'+(badMs&&a>badMs?' bad':warnMs&&a>warnMs?' warn':'');
+}
+function render(){
+  const ls=linkStatus(); renderHeader(ls); renderCamera(ls); renderGoals(ls); renderMission(ls); renderHealth(ls);
+}
+function renderHeader(ls){
+  const pill=$('linkpill'), txt=$('linktext');
+  pill.className='link-pill '+ls.s;
+  txt.textContent = ls.s==='ok'?'LINK OK' : ls.s==='degraded'?'LINK DEGRADED' : ls.s==='lost'?'LINK LOST '+fmtAge(now()-ls.since) : 'CONNECTING';
+  // frozen stamps
+  const lost = ls.s==='lost';
+  for (const p of ['camera','goals','mission','health']){
+    const panel=$('p-'+p); panel.classList.toggle('lost', lost);
+    if (lost) $('frz-'+p).textContent = link.lastAnyOk ? 'data frozen '+fmtAge(now()-link.lastAnyOk)+' ago' : 'no data ever received';
+  }
+}
+function renderCamera(ls){
+  const v=data.vision, lv=link.vision, row=$('vision-row'), chip=$('v-chip'), bb=$('bbox');
+  const age = v ? now()-v.timestamp : null;
+  const stale = !v || age>VISION_STALE_MS || lv.ok===false;
+  row.classList.toggle('stale', stale);
+  if (!v){ chip.className='chip dead'; chip.textContent = lv.ok===false ? 'VISION UNREACHABLE' : 'WAITING'; $('v-conf').textContent='confidence —'; $('v-conf-bar').style.width='0'; $('v-age').textContent='—'; bb.style.display='none'; }
+  else {
+    if (lv.ok===false){ chip.className='chip dead'; chip.textContent='VISION UNREACHABLE'; }
+    else if (stale){ chip.className='chip stale'; chip.textContent='STALE · '+(v.match?'was MATCH':'was no match'); }
+    else { chip.className='chip '+(v.match?'match':'nomatch'); chip.textContent = v.match?'MATCH':'NO MATCH'; }
+    $('v-conf').textContent='confidence '+v.confidence.toFixed(2); $('v-conf-bar').style.width=(v.confidence*100).toFixed(0)+'%';
+    const ageEl=$('v-age'); ageEl.textContent=fmtAge(age)+' ago'; ageEl.style.color = stale?'var(--amber)':'';
+    if (v.match && v.bbox){
+      const b=v.bbox; bb.style.display='block';
+      bb.style.left=(b.x_min*100)+'%'; bb.style.top=(b.y_min*100)+'%'; bb.style.width=((b.x_max-b.x_min)*100)+'%'; bb.style.height=((b.y_max-b.y_min)*100)+'%';
+      bb.className='bbox'+(stale?' stale':''); bb.dataset.label=(stale?'STALE ':'')+'target '+v.confidence.toFixed(2);
+    } else bb.style.display='none';
+  }
+  // camera signal
+  const comp = data.state && data.state.components && data.state.components.camera;
+  let nosig=null;
+  if (ls.s==='lost') nosig='robot unreachable';
+  else if (mode==='live' && camImgError) nosig='stream failed to load — check CORS / '+CAMERA_STREAM_PATH;
+  else if (comp && comp.status==='down') nosig='camera process down';
+  $('cam-nosig').style.display = nosig?'flex':'none'; $('cam-nosig-why').textContent=nosig||'';
+  $('cam-wm').style.display = mode==='mock'?'block':'none';
+  $('cam-src').textContent = mode==='mock' ? 'synthetic 640×360' : (CAMERA_URL ? 'real camera · web_video_server' : (CAMERA_REFRESH_MS>0 ? 'JPEG every '+CAMERA_REFRESH_MS+'ms' : 'MJPEG'));
+}
+function renderGoals(ls){
+  const g=data.goals, lg=link.goals;
+  const ageEl=$('goals-age');
+  if (!g){ ageEl.textContent = lg.ok===false ? 'UNREACHABLE — '+lg.err : 'waiting'; ageEl.style.color = lg.ok===false?'var(--red)':''; }
+  else { const a=now()-g.timestamp; ageEl.textContent=(lg.ok===false?'UNREACHABLE · last data ':'updated ')+fmtAge(a)+' ago'; ageEl.style.color = lg.ok===false?'var(--red)':(a>POLL_INTERVAL_MS*3?'var(--amber)':''); }
+  const a=g&&g.active, box=$('active');
+  box.classList.toggle('idle', !a);
+  if (!a){
+    $('ag-name').textContent = g ? 'no active goal' : (lg.ok===false?'action server unreachable':'—');
+    $('ag-pri').hidden=true; $('ag-id').textContent=''; $('ag-params').textContent=''; $('ag-meta').innerHTML=''; $('ag-ttl').hidden=true;
+  } else {
+    $('ag-name').textContent=a.action; $('ag-pri').hidden=false; $('ag-pri').textContent='P'+a.priority; $('ag-id').textContent=a.id;
+    $('ag-params').textContent=fmtParams(a.params);
+    const fb=a.feedback||{}; let m='';
+    m+='<div class="m"><b>elapsed</b><span class="num" data-elapsed="'+(a.started_at||a.accepted_at||a.submitted_at)+'">'+fmtAge(now()-(a.started_at||a.submitted_at))+'</span></div>';
+    if (isNum(fb.percent_complete)) m+='<div class="m"><b>complete</b><span>'+fb.percent_complete.toFixed(0)+'%</span><div class="fb-bar"><i style="width:'+clamp(fb.percent_complete,0,100)+'%"></i></div></div>';
+    if (isNum(fb.distance_remaining_m)) m+='<div class="m"><b>distance left</b><span>'+fb.distance_remaining_m.toFixed(1)+' m</span></div>';
+    for (const k in fb){ if (k!=='percent_complete'&&k!=='distance_remaining_m') m+='<div class="m"><b>'+esc(k)+'</b><span>'+esc(fb[k])+'</span></div>'; }
+    $('ag-meta').innerHTML=m;
+    const ttl=$('ag-ttl'); if (a.ttl_deadline){ ttl.hidden=false; ttl.dataset.deadline=a.ttl_deadline; ttl.dataset.start=a.started_at||a.accepted_at||now(); renderTTL(); } else ttl.hidden=true;
+  }
+  // queue
+  const q=g?g.queue:[]; $('q-count').textContent=q.length;
+  $('qlist').innerHTML = q.length ? q.map(x=>'<li><span class="pri q">P'+esc(x.priority)+'</span><span>'+esc(x.action)+' <span style="color:var(--dim)">'+esc(fmtParams(x.params))+'</span></span><span class="st">'+esc(x.status||'')+'</span></li>').join('')
+                                  : '<li class="empty">'+(g?'queue empty':'—')+'</li>';
+  // history
+  const h=g?g.history.slice(0,10):[];
+  $('hlist').innerHTML = h.length ? h.map(x=>{
+    const st=String(x.status||'').toUpperCase(), gl=STATE_GLYPH[st]||'?';
+    const why = x.reason ? esc(x.reason) : (st==='SUCCEEDED'?'completed':'');
+    return '<li class="s-'+esc(st)+'"><span class="state"><i>'+gl+'</i>'+esc(st.toLowerCase())+'</span>'+
+      '<span class="body"><span class="act">'+esc(x.action)+' <span style="color:var(--dim)">'+esc(fmtParams(x.params))+'</span></span><span class="why">'+why+'</span></span>'+
+      '<span class="when" data-ago="'+(x.finished_at||'')+'">'+(x.finished_at?fmtAge(now()-x.finished_at)+' ago':'')+'</span></li>';
+  }).join('') : '<li class="empty">'+(g?'no completed goals yet':'—')+'</li>';
+}
+function renderTTL(){
+  const ttl=$('ag-ttl'); if (ttl.hidden) return;
+  const dl=+ttl.dataset.deadline, st=+ttl.dataset.start, rem=dl-now(), total=Math.max(1000, dl-st);
+  $('ttl-num').textContent = rem>0 ? (rem/1000).toFixed(1)+'s' : 'EXPIRED';
+  const f=$('fuse'), pct=clamp(rem/total,0,1)*100; f.firstElementChild.style.width=pct+'%';
+  f.className='fuse'+(pct<15?' crit':pct<35?' warn':'');
+}
+function renderMission(ls){
+  const s=data.state, lst=link.state, g=data.goals;
+  const ageEl=$('state-age');
+  if (!s){ ageEl.textContent = lst.ok===false?'UNREACHABLE — '+lst.err:'waiting'; ageEl.style.color=lst.ok===false?'var(--red)':''; }
+  else { const a=now()-s.timestamp; ageEl.textContent=(lst.ok===false?'UNREACHABLE · last data ':'updated ')+fmtAge(a)+' ago'; ageEl.style.color=lst.ok===false?'var(--red)':(a>POLL_INTERVAL_MS*3?'var(--amber)':''); }
+  // plain-language activity derived from the active goal
+  const doing=$('doing'); const a=g&&g.active;
+  if (a){ const f=ACTION_TEXT[a.action]; doing.textContent = f?f(a):(a.action.replace(/_/g,' ')); doing.className='doing'; }
+  else if (g && s){
+    const cc=s.mission.concealment;
+    if (cc && cc.active){ doing.textContent='Holding in concealment — '+(cc.spot||'in cover'); doing.className='doing'; }
+    else { doing.textContent = s.mission.target ? 'Idle — waiting for planner' : 'Idle — no target set'; doing.className='doing none'; }
+  }
+  else { doing.textContent = link.goals.ok===false ? 'Unknown — goals endpoint unreachable' : '—'; doing.className='doing none'; }
+  if (s){
+    const m=s.mission||{};
+    $('m-target').innerHTML = m.target ? esc(m.target)+(m.target_set_at?'<span class="age">set '+fmtAge(now()-m.target_set_at)+' ago</span>':'') : '<span style="color:var(--dim)">no target set</span>';
+    const zs=Array.isArray(m.zones)?m.zones:[];
+    $('zones').innerHTML = zs.length ? zs.map(z=>'<span class="zone '+esc(z.status)+'" title="'+esc(z.status)+'">'+esc(z.id)+'</span>').join('')+
+      '<span class="age" style="margin-left:4px">'+zs.filter(z=>z.status==='cleared').length+'/'+zs.length+' cleared</span>' : '<span style="color:var(--dim);font-family:var(--font-data)">no zones</span>';
+    const ls_=m.last_sighting;
+    $('m-sight').innerHTML = ls_ ? 'zone '+esc(ls_.zone)+' @ ('+(+ls_.map_x).toFixed(1)+', '+(+ls_.map_y).toFixed(1)+') m<span class="age" data-ago="'+ls_.timestamp+'">'+fmtAge(now()-ls_.timestamp)+' ago</span>'
+                                 : '<span style="color:var(--dim)">none this mission</span>';
+    renderBehavior(m.behavior_mode, m.behavior_set_at);
+    const cc=m.concealment;
+    $('m-conceal').innerHTML = cc && cc.active
+      ? '<span class="conceal-on">CONCEALED</span> '+esc(cc.spot||'in cover')+(cc.since?'<span class="age" data-ago="'+cc.since+'">'+fmtAge(now()-cc.since)+' ago</span>':'')
+      : '<span style="color:var(--dim)">in the open</span>';
+    const b=s.battery, bt=$('batt');
+    if (!isNum(b.percent)){ bt.className='batt'; $('batt-fill').style.width='0'; $('batt-num').textContent='unknown (no battery reading)'; }
+    else { const pc=clamp(b.percent,0,100);
+    bt.className='batt'+(pc<15?' crit':pc<30?' low':''); $('batt-fill').style.width=pc+'%'; $('batt-num').textContent=pc.toFixed(1)+'%'+(isNum(b.voltage)?' · '+b.voltage.toFixed(1)+'V':''); }
+    setAge($('batt-age'), b.timestamp, 5000, 15000);
+  } else {
+    $('m-target').innerHTML='<span class="unreach">unreachable</span>'; $('zones').innerHTML=''; $('m-sight').innerHTML='<span class="unreach">unreachable</span>'; $('m-conceal').innerHTML='<span class="unreach">unreachable</span>';
+    $('batt-num').textContent='—'; $('batt-fill').style.width='0'; $('batt-age').textContent='';
+  }
+  const url = mode==='mock' ? 'simulated robot' : ROBOT_BASE_URL.replace(/^https?:\/\//,'');
+  $('m-link').innerHTML = '<span style="color:'+(ls.s==='ok'?'var(--green)':ls.s==='degraded'?'var(--amber)':'var(--red)')+'">'+esc(ls.s==='ok'?'connected':ls.s==='degraded'?'degraded':ls.s==='lost'?'LOST':'connecting')+'</span> · '+esc(url)+
+    (link.lastAnyOk?'<span class="age">last ok '+fmtAge(now()-link.lastAnyOk)+' ago</span>':'');
+}
+function renderBehavior(mode, setAt){
+  const f=$('btn-follow'), c=$('btn-conceal');
+  f.setAttribute('aria-pressed', mode==='follow'); c.setAttribute('aria-pressed', mode==='conceal');
+  f.classList.toggle('on', mode==='follow'); c.classList.toggle('on', mode==='conceal');
+  const m=$('beh-msg');
+  if (!mode){ m.className='tgt-msg'; m.textContent='mode unknown — robot unreachable'; }
+  else if (!behPending){ m.className='tgt-msg'; m.textContent='robot reports: '+mode+(setAt?' · set '+fmtAge(now()-setAt)+' ago':' (default)'); }
+}
+let behPending=false;
+function renderHealth(ls){
+  const s=data.state, comps=s&&s.components||{};
+  $('hlt').innerHTML = COMPONENTS.map(([k,label,sub])=>{
+    const c=comps[k]; let cls='unknown', stat='', sub2='';
+    if (!s){ stat = link.state.ok===false?'unknown — state unreachable':'waiting'; }
+    else if (!c){ stat='not reported'; }
+    else {
+      cls=(c.status==='ok'||c.status==='degraded'||c.status==='down')?c.status:'unknown';
+      const seen = isNum(c.last_seen)?'last contact '+fmtAge(now()-c.last_seen)+' ago':'last contact unknown';
+      if (cls==='down') { stat='DOWN'+(isNum(c.since)?' for '+fmtAge(now()-c.since):''); sub2=seen; }
+      else if (cls==='degraded') { stat='degraded'+(isNum(c.since)?' for '+fmtAge(now()-c.since):''); sub2=seen; }
+      else if (cls==='ok') { const silent = isNum(c.last_seen) && now()-c.last_seen>10000; if (silent){ cls='degraded'; stat='UNRESPONSIVE'; } else stat='ok'; sub2=seen; }
+      else { stat=esc(c.status); sub2=seen; }
+    }
+    return '<li class="'+cls+'"><span class="led"></span><span class="name">'+label+'<small>'+sub+'</small></span><span class="stat">'+stat+(sub2?'<small>'+sub2+'</small>':'')+'</span></li>';
+  }).join('');
+  const eps=[['state','/api/state'],['goals','/api/goals'],['vision','/api/vision']];
+  $('eplist').innerHTML = eps.map(([k,p])=>{
+    const e=link[k]; const cls = e.ok===true?'ok':e.ok===false?'down':'unknown';
+    const stat = e.ok===true?'ok':e.ok===false?'FAIL':'—';
+    const sub = e.ok===false ? esc(e.err)+(e.lastOk?' · last ok '+fmtAge(now()-e.lastOk)+' ago':' · never succeeded') : (e.lastOk?'last ok '+fmtAge(now()-e.lastOk)+' ago':'');
+    return '<li class="'+cls+'"><span class="led"></span><span class="name">'+p+'</span><span class="stat">'+stat+(sub?'<small>'+sub+'</small>':'')+'</span></li>';
+  }).join('');
+}
+/* fast tick: ages, TTL fuse, elapsed — these move even when no new data arrives */
+function fastTick(){
+  const ts=now();
+  for (const el of document.querySelectorAll('[data-ago]')){ const t=+el.dataset.ago; if (t) el.textContent=fmtAge(ts-t)+' ago'; }
+  for (const el of document.querySelectorAll('[data-elapsed]')){ const t=+el.dataset.elapsed; if (t) el.textContent=fmtAge(ts-t); }
+  renderTTL();
+  if (data.vision){ const a=ts-data.vision.timestamp; const el=$('v-age'); el.textContent=fmtAge(a)+' ago'; if (a>VISION_STALE_MS && !$('vision-row').classList.contains('stale')) render(); }
+  const ls=linkStatus(); if (ls.s==='lost' || $('linkpill').classList.contains('lost')) renderHeader(ls);
+  $('clock').textContent = new Date().toLocaleTimeString([], {hour12:false});
+}
+
+/* -------------------------------------------------------------------------------------
+   CAMERA — synthetic canvas in mock mode, <img> stream in live mode
+   ------------------------------------------------------------------------------------- */
+let camImgError=false, camRefreshTimer=null;
+const camCanvas=$('cam-canvas'), camImg=$('cam-img');
+function drawPerson(g, cx, cy, s, bodyColor){
+  g.fillStyle='#2a2a2a'; g.fillRect(cx-s*0.15,cy+s*0.1,s*0.3,s*0.4);
+  g.fillStyle=bodyColor; g.fillRect(cx-s*0.2,cy-s*0.25,s*0.4,s*0.42);
+  g.fillStyle='#c9a184'; g.fillRect(cx-s*0.08,cy-s*0.45,s*0.16,s*0.18);
+}
+function drawMockFrame(){
+  if (mode!=='mock' || sim.linkDown || sim.components.camera.status==='down') return;
+  const g=camCanvas.getContext('2d'), w=camCanvas.width, h=camCanvas.height;
+  const cover=sim.coverFraction();
+  g.fillStyle='#161a17'; g.fillRect(0,0,w,h);
+  g.fillStyle='#232a25'; g.fillRect(0,h*0.5,w,h*0.5);
+  g.strokeStyle='#33413a'; g.lineWidth=1; g.beginPath(); g.moveTo(0,h*0.5); g.lineTo(w,h*0.5); g.stroke();
+  // the target, wearing whatever colour was typed into the target field
+  if (sim.visionMode==='match') drawPerson(g, sim.targetPos.x*w, sim.targetPos.y*h, h*0.42, sim.figure.color);
+  // a non-target person: why the model returns match=false
+  else if (sim.distractor.visible) drawPerson(g, sim.distractor.x*w, 0.53*h, h*0.38, sim.distractor.color);
+  // foreground cover — slides in as the robot repositions, stays while concealed
+  if (cover>0){
+    const cw=w*cover;
+    g.fillStyle='#0c100d'; g.fillRect(0,0,cw,h);
+    g.strokeStyle='#4dff8a'; g.lineWidth=2; g.beginPath(); g.moveTo(cw,0); g.lineTo(cw,h); g.stroke();
+    g.fillStyle='rgba(0,0,0,0.3)'; g.fillRect(cw,0,w-cw,h);
+  }
+  g.fillStyle='#8fd1a3'; g.font='12px monospace';
+  g.fillText(new Date().toISOString().replace('T',' ').slice(0,19)+'  cam0  frame '+sim.frameId, 8, h-8);
+  if (sim.concealment.active){ g.fillStyle='#4dff8a'; g.fillRect(8,8,110,16); g.fillStyle='#000'; g.font='bold 11px monospace'; g.fillText('CONCEALED', 14,20); }
+  else if (cover>0){ g.fillStyle='#ffb13b'; g.fillRect(8,8,124,16); g.fillStyle='#000'; g.font='bold 11px monospace'; g.fillText('MOVING TO COVER', 14,20); }
+}
+function setupCamera(){
+  clearInterval(camRefreshTimer); camImgError=false;
+  if (mode==='mock'){ camCanvas.style.display='block'; camImg.style.display='none'; camImg.removeAttribute('src'); }
+  else {
+    camCanvas.style.display='none'; camImg.style.display='block';
+    const load=()=>{ camImg.src = (CAMERA_URL || (ROBOT_BASE_URL+CAMERA_STREAM_PATH))+(CAMERA_REFRESH_MS>0?'?t='+now():''); };
+    camImg.onerror=()=>{ camImgError=true; render(); if (CAMERA_REFRESH_MS===0) setTimeout(load, 3000); };
+    camImg.onload=()=>{ camImgError=false; };
+    load();
+    if (CAMERA_REFRESH_MS>0) camRefreshTimer=setInterval(load, CAMERA_REFRESH_MS);
+  }
+}
+
+/* -------------------------------------------------------------------------------------
+   CONTROLS
+   ------------------------------------------------------------------------------------- */
+function setMode(m){
+  mode=m;
+  for (const k of ['state','goals','vision']){ data[k]=null; link[k]={ok:null,lastOk:0,err:''}; }
+  link.lastAnyOk=0; link.firstAttempt=0;
+  $('btn-mock').setAttribute('aria-pressed', m==='mock'); $('btn-live').setAttribute('aria-pressed', m==='live');
+  const strip=$('modestrip'); strip.className='mode-strip '+m;
+  strip.innerHTML = m==='mock'
+    ? '<span class="tag">MOCK</span><span>SIMULATION — no robot connected. Every value on this page is synthetic.</span>'
+    : '<span class="tag">LIVE</span><span>Polling robot at</span><span class="url">'+esc(ROBOT_BASE_URL)+'</span>';
+  $('hdr-url').textContent = m==='live' ? ROBOT_BASE_URL.replace(/^https?:\/\//,'') : 'sim';
+  document.title = (m==='mock'?'[MOCK] ':'')+'Pearl UI';
+  setupCamera(); render(); poll();
+}
+$('btn-mock').onclick=()=>setMode('mock'); $('btn-live').onclick=()=>setMode('live');
+async function doAction(btn, fn, okText){
+  const msg=$('tgt-msg'); btn.disabled=true; msg.className='tgt-msg'; msg.textContent='sending…';
+  try { const r=await fn(); if (r && r.ok===false) throw new Error(r.error||'robot refused'); msg.className='tgt-msg ok'; msg.textContent=okText(r); poll(); }
+  catch(e){ msg.className='tgt-msg err'; msg.textContent='failed: '+(e.message||e); }
+  btn.disabled=false;
+}
+$('btn-set').onclick=()=>{ const v=$('tgt-input').value.trim(); if (!v){ $('tgt-msg').className='tgt-msg err'; $('tgt-msg').textContent='enter a target description first'; return; }
+  doAction($('btn-set'), ()=>src().setTarget(v), r=>'target set: '+(r&&r.target||v)+(mode==='mock'?' · sim figure: '+sim.figure.colorName+' '+sim.figure.garment:'')); };
+$('tgt-input').addEventListener('keydown', e=>{ if (e.key==='Enter') $('btn-set').click(); });
+$('btn-recall').onclick=()=>doAction($('btn-recall'), ()=>src().recall(), r=>'recall sent'+(r&&r.goal_id?' · '+r.goal_id:''));
+async function setBehavior(mode){
+  const m=$('beh-msg'); behPending=true; m.className='tgt-msg'; m.textContent='requesting '+mode+'…';
+  $('btn-follow').disabled=$('btn-conceal').disabled=true;
+  try {
+    const r=await src().setBehavior(mode);
+    if (r && r.ok===false) throw new Error(r.error||'robot refused');
+    m.className='tgt-msg ok'; m.textContent = mode==='conceal' ? 'hide requested — planner will move to cover' : 'follow requested — planner will pursue on contact';
+  } catch(e){ m.className='tgt-msg err'; m.textContent='failed: '+(e.message||e); }
+  $('btn-follow').disabled=$('btn-conceal').disabled=false;
+  setTimeout(()=>{ behPending=false; }, 2500);
+  poll();
+}
+$('btn-follow').onclick=()=>setBehavior('follow');
+$('btn-conceal').onclick=()=>setBehavior('conceal');
+
+/* -------------------------------------------------------------------------------------
+   BOOT
+   ------------------------------------------------------------------------------------- */
+$('ft-poll').textContent=POLL_INTERVAL_MS; $('ft-to').textContent=REQUEST_TIMEOUT_MS;
+setInterval(()=>sim.tick(), POLL_TICK_MS);                 // simulation always runs, even in live mode (cheap)
+setInterval(drawMockFrame, 125);
+setInterval(poll, POLL_INTERVAL_MS);
+setInterval(fastTick, 250);
+setMode(DEFAULT_MODE);
+</script>
+</body>
+</html>
