@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MentorPi backend v1 code diagram</title>
+<style>
+:root{
+  --canvas:#f3f3f3; --dot:rgba(0,0,0,.07); --chrome:#ececec; --chrome-2:#f8f8f8; --line:#d4d4d4;
+  --text:#1f1f1f; --muted:#6b6b6b; --box-bg:#ffffff; --box-border:#555555;
+  --hdr:#f2c94c; --hdr-text:#1b1b1b; --hdr-prompt:#8fd3b6; --hdr-ext:#c9c9c9;
+  --edge:#7a7a7a; --accent:#0a63c9; --row-hover:rgba(0,0,0,.05); --row-sel:rgba(10,99,201,.14);
+  --key-c:#9a6700; --key-f:#0a63c9; --key-t:#a1260d; --key-k:#5a5a5a; --key-e:#1d7a4f; --key-r:#7a3fb0; --key-s:#5a5a5a;
+  --code-bg:#f4f4f4; --tab-active:#ffffff;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --canvas:#1f2023; --dot:rgba(255,255,255,.05); --chrome:#252526; --chrome-2:#2b2b2d; --line:#3a3a3c;
+    --text:#d4d4d4; --muted:#8e8e8e; --box-bg:#1f2023; --box-border:#c4c4c4;
+    --hdr:#f0c44c; --hdr-text:#1b1b1b; --hdr-prompt:#8fd3b6; --hdr-ext:#b9b9b9;
+    --edge:#a3a3a3; --accent:#4aa3ff; --row-hover:rgba(255,255,255,.06); --row-sel:rgba(74,163,255,.18);
+    --key-c:#e5c07b; --key-f:#61afef; --key-t:#f48771; --key-k:#9d9d9d; --key-e:#89d185; --key-r:#c678dd; --key-s:#9d9d9d;
+    --code-bg:#18191b; --tab-active:#1f2023;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --canvas:#1f2023; --dot:rgba(255,255,255,.05); --chrome:#252526; --chrome-2:#2b2b2d; --line:#3a3a3c;
+  --text:#d4d4d4; --muted:#8e8e8e; --box-bg:#1f2023; --box-border:#c4c4c4;
+  --hdr:#f0c44c; --hdr-text:#1b1b1b; --hdr-prompt:#8fd3b6; --hdr-ext:#b9b9b9;
+  --edge:#a3a3a3; --accent:#4aa3ff; --row-hover:rgba(255,255,255,.06); --row-sel:rgba(74,163,255,.18);
+  --key-c:#e5c07b; --key-f:#61afef; --key-t:#f48771; --key-k:#9d9d9d; --key-e:#89d185; --key-r:#c678dd; --key-s:#9d9d9d;
+  --code-bg:#18191b; --tab-active:#1f2023;
+  color-scheme:dark;
+}
+*{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{background:var(--chrome);color:var(--text);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.app{height:100%;display:flex;flex-direction:column}
+.tabs{display:flex;align-items:stretch;height:34px;background:var(--chrome);border-bottom:1px solid var(--line);flex:none}
+.tab{display:flex;align-items:center;gap:8px;padding:0 14px;background:var(--tab-active);border-right:1px solid var(--line);border-top:2px solid var(--accent);font-size:12.5px;white-space:nowrap}
+.tab svg{flex:none}
+.tabs .spacer{flex:1}
+.toolbar{display:flex;align-items:center;gap:2px;height:32px;padding:0 6px;background:var(--canvas);border-bottom:1px solid var(--line);flex:none;overflow-x:auto}
+.tb{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;min-width:28px;padding:0 6px;border:0;border-radius:4px;background:transparent;cursor:pointer;color:var(--text);white-space:nowrap;font-size:12px}
+.tb:hover{background:var(--row-hover)}
+.tb svg{width:16px;height:16px;flex:none}
+.tb.on{background:var(--row-sel)}
+.sep{width:1px;height:18px;background:var(--line);margin:0 6px;flex:none}
+
+.main{flex:1;display:flex;min-height:0;position:relative}
+.sidebar{width:250px;flex:none;background:var(--chrome);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sidebar.hidden{display:none}
+.sb-head{font-size:11px;font-weight:700;letter-spacing:.02em;padding:10px 12px 6px;color:var(--text)}
+.search{margin:0 10px 8px;display:flex;align-items:center;gap:6px;background:var(--chrome-2);border:1px solid var(--line);border-radius:4px;padding:0 8px}
+.search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:12.5px;padding:6px 0;outline:none}
+.tree{flex:1;overflow:auto;padding-bottom:8px}
+.tree details>summary{list-style:none;display:flex;align-items:center;gap:6px;padding:3px 10px;cursor:pointer;font-size:12.5px;font-weight:600;user-select:none}
+.tree details>summary::-webkit-details-marker{display:none}
+.tree details>summary .chev{transition:transform .12s;flex:none}
+.tree details[open]>summary .chev{transform:rotate(90deg)}
+.tree .count{margin-left:auto;color:var(--muted);font-weight:400;font-size:11px}
+.tree .item{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:0;background:transparent;padding:3px 10px 3px 30px;cursor:pointer;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tree .item:hover{background:var(--row-hover)}
+.tree .item.sel{background:var(--row-sel)}
+.tree .swatch{width:9px;height:9px;flex:none;border:1px solid var(--box-border)}
+.tree .empty{padding:8px 12px;color:var(--muted);font-size:12px}
+.legend{border-top:1px solid var(--line);padding:8px 12px 10px;font-size:11.5px;color:var(--muted);flex:none}
+.legend .lg-title{font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;letter-spacing:.02em}
+.legend .keys{display:grid;grid-template-columns:repeat(2,1fr);gap:1px 10px}
+.legend b{display:inline-block;width:14px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.legend .kinds{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.legend .kinds span{display:inline-flex;align-items:center;gap:5px}
+
+.viewport{flex:1;position:relative;overflow:hidden;background-color:var(--canvas);background-image:radial-gradient(var(--dot) 1px,transparent 1.2px);cursor:grab;touch-action:none;min-width:0}
+.viewport.panning{cursor:grabbing}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}
+.edges path.vis{fill:none;stroke:var(--edge);stroke-width:1.1}
+.edges path.vis.dashed{stroke-dasharray:4 3}
+.edges path.hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:pointer}
+.edges g.hi path.vis{stroke:var(--accent);stroke-width:1.8}
+.edges g.dim{opacity:.13}
+.edges marker path{fill:var(--edge)}
+.edges marker#arrow-hi path{fill:var(--accent)}
+.lane-label{position:absolute;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap;pointer-events:none}
+.elabel{position:absolute;transform:translate(-50%,-50%);background:var(--canvas);border:1px solid var(--accent);color:var(--text);font-size:10.5px;padding:1px 6px;border-radius:3px;white-space:nowrap;pointer-events:none}
+
+.box{position:absolute;width:290px;background:var(--box-bg);border:1px solid var(--box-border);font-size:11px;line-height:1.3;color:var(--text);user-select:none;-webkit-user-select:none;cursor:default}
+.box .hdr{background:var(--hdr);color:var(--hdr-text);font-weight:700;text-align:center;padding:3px 8px;border-bottom:1px solid var(--box-border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:move}
+.box.prompt .hdr{background:var(--hdr-prompt)}
+.box.external .hdr{background:var(--hdr-ext)}
+.box .rows{padding:3px 0}
+.box .row,.box .lk{display:grid;grid-template-columns:15px minmax(0,1fr) auto;align-items:baseline;padding:1px 6px;cursor:pointer}
+.box .row:hover,.box .lk:hover{background:var(--row-hover)}
+.box .row.on{background:var(--row-sel)}
+.box .k{font-weight:700;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px}
+.k-C{color:var(--key-c)} .k-F{color:var(--key-f)} .k-T{color:var(--key-t)} .k-K{color:var(--key-k)} .k-E{color:var(--key-e)} .k-R{color:var(--key-r)} .k-S{color:var(--key-s)}
+.box .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.box.prompt .row .n{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.3px;white-space:pre}
+.box .t{color:var(--muted);font-size:10px;white-space:nowrap;text-align:right;padding-left:10px;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.box .links{border-top:1px solid var(--box-border);padding:3px 0}
+.box .lk .n{color:var(--text)}
+.box .lk svg{width:9px;height:9px;color:var(--muted)}
+.box .more{padding:1px 6px 2px 21px;color:var(--muted);font-style:italic}
+.box.sel{outline:2px solid var(--accent);outline-offset:1px;z-index:2}
+.box.dim{opacity:.32}
+.box.match{outline:2px dashed var(--accent);outline-offset:2px}
+.box.dragging{z-index:5;cursor:move}
+
+.panel{width:360px;flex:none;background:var(--chrome);border-left:1px solid var(--line);display:none;flex-direction:column;min-height:0}
+.panel.open{display:flex}
+.p-head{display:flex;align-items:flex-start;gap:8px;padding:10px 12px 8px;border-bottom:1px solid var(--line)}
+.p-title{flex:1;min-width:0}
+.p-title h2{margin:0;font-size:13.5px;font-weight:700;word-break:break-word}
+.p-title .file{font-size:11.5px;color:var(--muted);margin-top:2px;word-break:break-all}
+.p-body{flex:1;overflow:auto;padding:10px 12px 16px}
+.p-body p.summary{margin:0 0 12px;max-width:62ch}
+.p-sec{margin:14px 0 6px;font-size:11px;font-weight:700;letter-spacing:.02em;color:var(--text)}
+.p-row{display:grid;grid-template-columns:16px minmax(0,1fr);gap:2px 4px;padding:5px 6px;border-radius:4px;cursor:pointer}
+.p-row:hover{background:var(--row-hover)}
+.p-row.on{background:var(--row-sel)}
+.p-row .nm{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;word-break:break-word}
+.p-row .ty{color:var(--muted);font-size:11px;margin-left:6px}
+.p-row .ds{grid-column:2;color:var(--muted);font-size:12px}
+.p-link{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;border:0;background:transparent;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12.5px}
+.p-link:hover{background:var(--row-hover)}
+.p-link .lbl{color:var(--muted);font-size:11.5px}
+.code{position:relative;background:var(--code-bg);border:1px solid var(--line);border-radius:4px;margin:0}
+.code pre{margin:0;padding:34px 10px 10px;font-size:11.3px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto}
+.code .copy{position:absolute;top:6px;right:6px;background:var(--chrome);border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:11.5px;cursor:pointer}
+.missing{border:1px dashed var(--muted);border-radius:4px;padding:10px;color:var(--muted);font-size:12px}
+.p-close{border:0;background:transparent;width:26px;height:26px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.p-close:hover{background:var(--row-hover)}
+.chip{display:inline-block;font-size:10.5px;padding:0 6px;border:1px solid var(--box-border);color:var(--hdr-text);margin-top:5px}
+
+.status{height:22px;flex:none;display:flex;align-items:center;gap:14px;padding:0 10px;background:var(--accent);color:#fff;font-size:11.5px;white-space:nowrap;overflow:hidden}
+.status .hint{flex:1;overflow:hidden;text-overflow:ellipsis;opacity:.9}
+
+.tip{position:fixed;z-index:50;max-width:320px;background:var(--chrome-2);border:1px solid var(--line);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12px;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.25);display:none}
+.tip .tn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;margin-bottom:2px;word-break:break-word}
+.toast{position:fixed;left:50%;bottom:calc(36px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--chrome-2);border:1px solid var(--line);color:var(--text);padding:7px 10px 7px 14px;border-radius:5px;font-size:12.5px;display:none;align-items:center;gap:10px;z-index:60;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.toast.show{display:flex}
+.toast button{border:1px solid var(--line);background:transparent;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px}
+
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:70;padding:16px}
+.modal.open{display:flex}
+.dialog{background:var(--chrome);border:1px solid var(--line);border-radius:6px;width:min(900px,100%);height:min(88%,820px);display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.d-head{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);gap:8px}
+.d-head h2{margin:0;font-size:14px;flex:1}
+.d-help{padding:10px 14px 0;font-size:12.5px;color:var(--muted);max-width:90ch}
+.d-help code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--text);background:var(--code-bg);padding:0 3px;border-radius:3px}
+.d-help ul{margin:6px 0 0;padding-left:18px}
+.dialog textarea{flex:1;margin:10px 14px;min-height:0;resize:none;background:var(--code-bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:10px;font:11.5px/1.45 ui-monospace,Menlo,Consolas,monospace;tab-size:2;white-space:pre;overflow:auto}
+.d-err{color:#e5484d;font-size:12.5px;padding:0 14px;min-height:18px}
+.d-foot{display:flex;gap:8px;padding:8px 14px 12px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--chrome-2);border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12.5px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.d-foot .grow{flex:1}
+
+@media (max-width:820px){
+  .sidebar{position:absolute;left:0;top:0;bottom:0;z-index:20;box-shadow:4px 0 16px rgba(0,0,0,.25)}
+  .panel{position:absolute;left:0;right:0;bottom:0;width:auto;height:58%;z-index:25;border-left:0;border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.25)}
+  .tb .lbl{display:none}
+  .status .hint{display:none}
+  .tab .tab-full{display:none}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tabs">
+    <div class="tab">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="2" width="5" height="4"/><rect x="9.5" y="2" width="5" height="4"/><rect x="5.5" y="10" width="5" height="4"/><path d="M4 6v2h4v2M12 6v2H8"/></svg>
+      <span>Diagram-1 <span class="tab-full">(MentorPi backend v1)</span></span>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="toolbar" role="toolbar" aria-label="Diagram tools">
+    <button class="tb on" id="tbSidebar" title="Show or hide the module list" aria-label="Show or hide the module list" aria-pressed="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M6 2.5v11"/></svg>
+    </button>
+    <span class="sep"></span>
+    <button class="tb" id="tbZoomIn" title="Zoom in (+)" aria-label="Zoom in">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M5 7h4M7 5v4"/></svg>
+    </button>
+    <button class="tb" id="tbZoomOut" title="Zoom out (−)" aria-label="Zoom out">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M5 7h4"/></svg>
+    </button>
+    <button class="tb" id="tbFit" title="Fit everything on screen (F)" aria-label="Fit everything on screen">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5"/></svg>
+    </button>
+    <button class="tb" id="tb100" title="Actual size (0)" aria-label="Actual size">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.5" y="2.5" width="11" height="11"/><path d="M5.5 6.5 6.5 5.5v5M9.5 6.5l1-1v5"/></svg>
+    </button>
+    <span class="sep"></span>
+    <button class="tb" id="tbReset" title="Put every box back in its column" aria-label="Reset layout">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v3h3"/></svg>
+      <span class="lbl">Reset layout</span>
+    </button>
+    <button class="tb" id="tbEdit" title="Edit the diagram data" aria-label="Edit diagram data">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M10.5 2.5l3 3L6 13H3v-3z"/><path d="M9 4l3 3"/></svg>
+      <span class="lbl">Edit data</span>
+    </button>
+  </div>
+
+  <div class="main">
+    <aside class="sidebar" id="sidebar" aria-label="Modules">
+      <div class="sb-head">MODULES</div>
+      <label class="search">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+        <input id="q" type="search" placeholder="Find code, prompts, settings" aria-label="Find in diagram" autocomplete="off">
+      </label>
+      <div class="tree" id="tree"></div>
+      <div class="legend">
+        <div class="lg-title">KEY</div>
+        <div class="keys">
+          <span><b class="k-C">C</b>class</span><span><b class="k-F">F</b>function</span>
+          <span><b class="k-T">T</b>thread</span><span><b class="k-K">K</b>setting</span>
+          <span><b class="k-S">S</b>step</span><span><b class="k-E">E</b>endpoint</span>
+          <span><b class="k-R">R</b>prompt line</span>
+        </div>
+        <div class="kinds">
+          <span><i class="swatch" style="background:var(--hdr);width:9px;height:9px;border:1px solid var(--box-border);display:inline-block"></i>Code</span>
+          <span><i class="swatch" style="background:var(--hdr-prompt);width:9px;height:9px;border:1px solid var(--box-border);display:inline-block"></i>Prompt</span>
+          <span><i class="swatch" style="background:var(--hdr-ext);width:9px;height:9px;border:1px solid var(--box-border);display:inline-block"></i>Server</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="viewport" id="viewport">
+      <div class="world" id="world">
+        <svg class="edges" id="edges" aria-hidden="true"></svg>
+        <div id="lanes"></div>
+        <div id="boxes"></div>
+        <div id="elabels"></div>
+      </div>
+    </div>
+
+    <aside class="panel" id="panel" aria-label="Details"></aside>
+  </div>
+
+  <div class="status">
+    <span id="stCount"></span>
+    <span class="hint">Drag boxes to move them. Scroll to pan; Ctrl + scroll or pinch to zoom. Click a box to see what it does.</span>
+    <span id="stZoom"></span>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastBtn" type="button">Undo</button></div>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+  <div class="dialog">
+    <div class="d-head">
+      <h2 id="dTitle">Edit diagram data</h2>
+      <button class="p-close" id="dClose" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+    </div>
+    <div class="d-help">
+      Everything on the canvas comes from this data. Change it here and press Apply; it’s saved in this browser.
+      To make a change permanent for everyone, press Copy JSON and paste it over the <code>DIAGRAM</code> block at the top of the page’s script.
+      <ul>
+        <li>A box: <code>id</code>, <code>title</code>, <code>file</code>, <code>lane</code>, <code>summary</code>, and optional <code>kind</code> (<code>"prompt"</code> or <code>"external"</code>).</li>
+        <li><code>rows</code>: <code>["key", "name", "type", "what it does"]</code>. Keys: C class, F function, T thread, K setting, S step, E endpoint, R prompt line.</li>
+        <li><code>links</code>: <code>["target id", "label"]</code>, or add <code>"dashed"</code> for a network call.</li>
+        <li>Prompt boxes take the full prompt in <code>text</code>; leave out <code>rows</code> and each line becomes a row.</li>
+        <li>Leave out <code>x</code> and <code>y</code> and the box stacks itself in its lane.</li>
+      </ul>
+    </div>
+    <textarea id="dText" spellcheck="false" aria-label="Diagram data as JSON"></textarea>
+    <div class="d-err" id="dErr" role="alert"></div>
+    <div class="d-foot">
+      <button class="btn primary" id="dApply" type="button">Apply</button>
+      <button class="btn" id="dCopy" type="button">Copy JSON</button>
+      <span class="grow"></span>
+      <button class="btn" id="dRestore" type="button">Restore original</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   DIAGRAM DATA: edit this block to update the diagram.
+   lanes  = the columns, left to right
+   boxes  = one per file (or prompt / server)
+     rows : ["key", "name", "type", "what it does"]
+            keys: C class, F function, T thread, K setting, S step,
+                  E endpoint, R prompt line
+     links: ["target box id", "label"]  add "dashed" for network calls
+     text : full prompt text (prompt boxes only)
+     x, y : optional; leave out to auto-stack in the lane
+   ===================================================================== */
+const DIAGRAM = {
+  title: "MentorPi backend v1",
+  lanes: [
+    { id: "core",    name: "Start-up and shared" },
+    { id: "vision",  name: "Layer 1 Vision" },
+    { id: "models",  name: "Model servers and scripts" },
+    { id: "planner", name: "Layer 2 Planner" },
+    { id: "prompts", name: "Planner prompts" },
+    { id: "actions", name: "Layer 3 Actions" },
+    { id: "robot",   name: "Robot and Layer 4 Safety" },
+    { id: "bridge",  name: "Layer 5 Bridge and tests" }
+  ],
+  boxes: [
+    /* ---------------- Start-up and shared ---------------- */
+    { id: "run", lane: "core", title: "RUN.PY", file: "run.py",
+      summary: "The entry point. You start the backend with this file; it reads the run mode and hands over to app.py.",
+      rows: [
+        ["S", "start the backend", "ENTRY", "Reads the environment, then calls app.py to build and start everything."],
+        ["K", "MENTORPI_STUB", "ENV 1 | 0", "1 (the default) runs with a fake robot on any laptop. 0 runs on the real robot."],
+        ["K", "MENTORPI_STUB_REAL_MODELS", "ENV", "Fake robot but real llama.cpp servers, so you can work on prompts without the car."]
+      ],
+      links: [["app", "starts"]] },
+
+    { id: "app", lane: "core", title: "MENTORPI.APP", file: "mentorpi/app.py",
+      summary: "Wires the five layers together, starts every thread in order, and shuts everything down on Ctrl+C.",
+      rows: [
+        ["S", "pick the robot", "REAL | STUB", "Builds the real ROS2 robot on the car or the fake one on a laptop. Both look the same to the code above."],
+        ["T", "safety floor", "10 Hz", "Lidar stop, geofence and lidar-timeout checks."],
+        ["T", "action tick", "5 Hz", "Steps every running goal, expires stale ones and promotes queued ones."],
+        ["T", "vision", "4 Hz / 1.5 s", "Tracker four times a second, vision model re-check every 1.5 s."],
+        ["T", "planner", "EVERY 2 s", "Asks for a new decision every 2 seconds."],
+        ["T", "http bridge", "PORT 8000", "Serves the dashboard."],
+        ["S", "shut down", "SIGINT / SIGTERM", "Stops every thread; running goals end with the reason shutdown."]
+      ],
+      links: [["config", "reads settings"], ["state", "creates"], ["interface", "picks real or stub robot"], ["safety", "starts watchdog"], ["manager", "starts tick thread"], ["pipeline", "starts thread"], ["loop", "starts thread"], ["http", "starts server"]] },
+
+    { id: "config", lane: "core", title: "MENTORPI.CONFIG", file: "mentorpi/config.py",
+      summary: "Every topic, action name, message type, port, threshold, interval and zone coordinate lives here. Anything only the robot can tell you is marked TODO(hw).",
+      rows: [
+        ["K", "TOPICS", "DICT", "ROS2 topic names: motor cmd_vel, Nav2 cmd_vel, lidar, camera, battery, odometry, pan/tilt servo."],
+        ["K", "ZONES", "MAP COORDS", "Named search areas (zone_a to zone_d) as polygons from the SLAM map."],
+        ["K", "GEOFENCE_POLYGON", "MAP COORDS", "The robot must stay inside this shape."],
+        ["K", "CONCEALMENT_POINTS", "MAP COORDS", "Places the robot can move to when hiding."],
+        ["K", "VLM_URL", "HTTP :8082", "Address of the vision server. Moved off 8080 because Hiwonder’s camera viewer holds that port."],
+        ["K", "PLANNER_URL", "HTTP :8081", "Address of the planner server."],
+        ["K", "PLANNER_PROMPT_VERSION", "v1 | v1b | v2 | v2b", "Which system prompt the planner sends."],
+        ["K", "PLANNER_CONSTRAIN_MODE", "json_schema", "How the planner’s answer is forced into shape: json_schema, gbnf or native tool calls."],
+        ["K", "CAMERA_HFOV_DEG", "65° GUESS", "Camera field of view, used to turn a box position into a bearing. Still unmeasured."],
+        ["K", "SAFETY_GATE_CMD_VEL", "BOOL", "True: Nav2’s output reaches the motors only while the safety gate is open."]
+      ],
+      links: [] },
+
+    { id: "state", lane: "core", title: "MENTORPI.STATE", file: "mentorpi/state.py",
+      summary: "SharedState: the one place the threads share data, behind a single lock. The bridge reads plain-dict snapshots; the planner reads a compact JSON context.",
+      rows: [
+        ["C", "SharedState", "ONE LOCK", "Holds mission, target, pose, battery, zones, vision result, safety status and component health."],
+        ["S", "snapshot", "→ DICT", "A copy for the HTTP bridge, so the dashboard never reads half-written data."],
+        ["S", "planner context", "→ JSON", "The short state the planner sees: target, mission, vision, last sighting age, zones, battery, behavior, goals."],
+        ["S", "vision result", "← VISION", "Latest match, confidence, box and bearing."],
+        ["S", "component health", "STATUS + TIMES", "One entry each for ros, camera, lidar, battery, nav2, vision model, planner model and http."]
+      ],
+      links: [] },
+
+    { id: "logging", lane: "core", title: "MENTORPI.LOGGING_SETUP", file: "mentorpi/logging_setup.py",
+      summary: "Two logs: readable text in the terminal, and one JSON object per line in logs/mentorpi.jsonl for analysis later.",
+      rows: [
+        ["F", "log_event(...)", "→ JSONL", "Writes one structured event, for example planner.decision or goal.transition."],
+        ["S", "text log", "STDERR", "What you read live in the terminal."],
+        ["K", "logs/mentorpi.jsonl", "FILE", "Query it with jq, for example every planner decision with its prompt_version and latency."]
+      ],
+      links: [] },
+
+    { id: "geometry", lane: "core", title: "MENTORPI.GEOMETRY", file: "mentorpi/geometry.py",
+      summary: "Small maths helpers shared by the safety floor and validation.",
+      rows: [
+        ["S", "point in polygon", "→ BOOL", "Is this point inside a zone or the geofence?"],
+        ["S", "distance to edge", "→ METRES", "How close the robot is to the geofence."],
+        ["S", "yaw ↔ quaternion", "ANGLES", "Converts a heading angle to and from ROS2’s rotation format."]
+      ],
+      links: [] },
+
+    /* ---------------- Layer 1 Vision ---------------- */
+    { id: "pipeline", lane: "vision", title: "VISION.PIPELINE", file: "mentorpi/vision/pipeline.py",
+      summary: "The vision thread. A cheap tracker follows the target between model checks, and the vision model re-checks every 1.5 s.",
+      rows: [
+        ["C", "VisionPipeline", "THREAD", "Owns the vision loop."],
+        ["S", "tracker step", "4 Hz", "Moves the last box with the classical tracker so the bearing stays fresh between model answers."],
+        ["S", "model re-check", "EVERY 1.5 s", "Sends the newest frame to the vision model. Set the interval to about 1.5× the measured model time."],
+        ["S", "publish result", "→ STATE", "Writes match, confidence, box, bearing and source (vlm or tracker)."]
+      ],
+      links: [["interface", "reads camera frame"], ["vlm_client", "asks: is this the target?"], ["tracker", "fills the gaps"], ["state", "writes vision result"]] },
+
+    { id: "vlm_client", lane: "vision", title: "VISION.VLM_CLIENT", file: "mentorpi/vision/vlm_client.py",
+      summary: "Layer 1 model call. Sends a small JPEG and the target description to the vision server and reads back match, confidence and box. Any error counts as not seen.",
+      rows: [
+        ["S", "encode frame", "320 px JPEG q70", "Shrinks the newest camera frame before sending it."],
+        ["S", "POST /v1/chat/completions", "HTTP", "Same request format as OpenAI’s chat API, with a JSON schema so the model can only answer in that shape."],
+        ["S", "parse answer", "FAIL-CLOSED", "Timeouts, broken JSON or answers like “maybe” all mean no match."],
+        ["S", "box → bearing", "DEGREES", "Turns the box’s horizontal position into a turn angle using CAMERA_HFOV_DEG."],
+        ["K", "VLM_TIMEOUT_S", "6.0 s", "How long to wait for an answer."],
+        ["K", "VLM_MAX_TOKENS", "96", "Keeps answers short."]
+      ],
+      links: [["vlm_prompt", "sends this prompt"], ["vlm_server", "HTTP :8082", "dashed"]] },
+
+    { id: "vlm_prompt", lane: "vision", kind: "prompt", title: "PROMPT.VLM_CHECK", file: "mentorpi/vision/vlm_client.py",
+      summary: "The question sent with every camera frame: is the described target in this image, and where? One-shot, with no examples, in v1.",
+      note: "The exact wording isn’t saved in the project notes. Open vlm_client.py, copy the prompt, and paste it into this box’s \"text\" field with Edit data.",
+      rows: [
+        ["R", "image", "320 px JPEG", "The newest camera frame."],
+        ["R", "target description", "TEXT", "What the operator typed, for example “person in a red jacket”."],
+        ["R", "answer shape", "JSON SCHEMA", "{\"match\": true, \"confidence\": 0.83, \"bbox\": [0.41, 0.22, 0.63, 0.88]}"],
+        ["R", "temperature", "0", "Same frame, same answer."]
+      ],
+      links: [] },
+
+    { id: "tracker", lane: "vision", title: "VISION.TRACKER", file: "mentorpi/vision/tracker.py",
+      summary: "A cheap classical tracker that bridges the 1.5 s gaps between model answers. It drifts when the target changes size, so it isn’t meant to track for minutes.",
+      rows: [
+        ["S", "template match", "160 px GRAY", "The default: finds the last box’s patch in a small grayscale frame."],
+        ["S", "KCF tracker", "IF CONTRIB", "Used instead when opencv-contrib is installed."]
+      ],
+      links: [] },
+
+    /* ---------------- Model servers and scripts ---------------- */
+    { id: "vlm_server", lane: "models", kind: "external", title: "LLAMA.VLM_SERVER", file: "llama.cpp server, started by scripts/start_models.sh",
+      summary: "llama.cpp running the vision model on the Pi itself. No internet needed during a run.",
+      rows: [
+        ["K", "model", "LFM2.5-VL-450M Q8_0", "Plus its mmproj file, which lets it read images."],
+        ["K", "port", "8082", "Not 8080: Hiwonder’s web_video_server uses that."],
+        ["K", "threads", "2", "Leaves CPU room for SLAM and Nav2."],
+        ["E", "/v1/chat/completions", "POST", "Where vlm_client sends frames."],
+        ["E", "/health", "GET", "Answers {\"status\":\"ok\"} when ready."]
+      ],
+      links: [] },
+
+    { id: "planner_server", lane: "models", kind: "external", title: "LLAMA.PLANNER_SERVER", file: "llama.cpp server, started by scripts/start_models.sh",
+      summary: "llama.cpp running the small planner model. Grammar-constrains the answer server-side from the JSON schema it receives.",
+      rows: [
+        ["K", "model", "LFM2.5-230M", "Not a reasoning model: short, declarative prompts work best."],
+        ["K", "port", "8081", ""],
+        ["K", "threads", "1", "Prompt length dominates latency on one ARM core."],
+        ["E", "/v1/chat/completions", "POST", "Where planner_client sends the prompt and state."],
+        ["E", "/health", "GET", "Answers {\"status\":\"ok\"} when ready."]
+      ],
+      links: [] },
+
+    { id: "start_models", lane: "models", title: "SCRIPTS.START_MODELS.SH", file: "scripts/start_models.sh",
+      summary: "Starts both llama.cpp servers. Edit the GGUF paths and thread counts here.",
+      rows: [
+        ["S", "start vision server", ":8082, 2 THREADS", "Needs --mmproj for images."],
+        ["S", "start planner server", ":8081, 1 THREAD", ""],
+        ["K", "VLM_MMPROJ", "ENV PATH", "Path to the vision model’s image projector file."]
+      ],
+      links: [["vlm_server", "starts"], ["planner_server", "starts"]] },
+
+    { id: "discover_hw", lane: "models", title: "SCRIPTS.DISCOVER_HW.SH", file: "scripts/discover_hw.sh",
+      summary: "Run on the Pi to print every topic, message type and action name that config.py needs.",
+      rows: [
+        ["S", "list topics and types", "ros2", "Shows what the robot actually publishes."],
+        ["S", "answer TODO(hw)", "→ CONFIG", "Copy the results into config.py."]
+      ],
+      links: [["config", "fills in TODO(hw)"]] },
+
+    /* ---------------- Layer 2 Planner ---------------- */
+    { id: "loop", lane: "planner", title: "PLANNER.LOOP", file: "mentorpi/planner/loop.py",
+      summary: "The planner thread. Every 2 s it builds the context, asks for a decision and submits the goals. On any failure it submits a safe hold.",
+      rows: [
+        ["C", "PlannerLoop", "THREAD 2 s", "Sleeps on Event.wait() between cycles; no busy loop."],
+        ["S", "build context", "← STATE", "The compact state JSON the model reads."],
+        ["S", "decide", "→ CLIENT", "One model call per cycle."],
+        ["S", "submit goals", "→ MANAGER", "Up to 2 tool calls become goals."],
+        ["S", "fallback", "hold 3 s, p10", "Only when no chassis goal is running."]
+      ],
+      links: [["state", "reads context"], ["planner_client", "asks for a decision"], ["manager", "submits goals"]] },
+
+    { id: "planner_client", lane: "planner", title: "PLANNER.PLANNER_CLIENT", file: "mentorpi/planner/planner_client.py",
+      summary: "Layer 2 model call. Sends the system prompt and the state JSON to the planner server, forces the answer into the tool-call shape, then re-checks every call. Never raises.",
+      rows: [
+        ["C", "PlannerClient", "", ""],
+        ["F", "decide(ctx)", "→ DECISION", "Returns ok=False on timeout, a dead server or unparseable output."],
+        ["S", "constrained decoding", "json_schema", "The model can only produce {\"tool_calls\":[{name, arguments, priority}]} with valid names."],
+        ["S", "parse", "3 FALLBACKS", "Native tool_calls, then message content as JSON, then lenient (strip fences, find braces)."],
+        ["S", "validate calls", "vs ACTIONS", "Second line of defence after the grammar."],
+        ["S", "clamp priority", "0–79", "Operator commands sit above the planner’s band."],
+        ["K", "PLANNER_TEMPERATURE", "0.0", ""],
+        ["K", "PLANNER_MAX_TOKENS", "160", ""],
+        ["K", "PLANNER_TIMEOUT_S", "4.0 s", "4.0 s in v1; raised to 15 s after v2 testing."]
+      ],
+      links: [["prompts_mod", "loads system prompt"], ["tools", "sends JSON schema"], ["grammar", "GBNF mode only"], ["goal", "re-checks every call"], ["planner_server", "HTTP :8081", "dashed"]] },
+
+    { id: "tools", lane: "planner", title: "PLANNER.TOOLS", file: "mentorpi/planner/tools.py",
+      summary: "Builds the planner’s tool list straight from ACTIONS, plus the JSON schema used for constrained decoding. The model can only name tools that exist.",
+      rows: [
+        ["S", "tool list text", "→ {tools}", "The lines pasted into prompts v1, v1b and v2."],
+        ["S", "JSON schema", "response_format", "Sent with every request so llama.cpp constrains the output."],
+        ["K", "PLANNER_MAX_CALLS_PER_CYCLE", "2", ""]
+      ],
+      links: [["goal", "derived from ACTIONS"], ["tool_list", "generates"]] },
+
+    { id: "grammar", lane: "planner", title: "PLANNER.GRAMMAR.GBNF", file: "mentorpi/planner/grammar.gbnf",
+      summary: "Hand-written GBNF grammar, the alternative to the JSON schema. Used only when PLANNER_CONSTRAIN_MODE is \"gbnf\".",
+      rows: [
+        ["S", "tool_calls rule", "GBNF", "Same output shape as the JSON schema."],
+        ["S", "zone ids", "HARD-CODED", "Regenerate if ZONES changes."]
+      ],
+      links: [] },
+
+    /* ---------------- Planner prompts ---------------- */
+    { id: "prompts_mod", lane: "prompts", title: "PLANNER.PROMPTS", file: "mentorpi/planner/prompts.py",
+      summary: "Versioned system prompts. A version is never edited in place; a change means a new key. PLANNER_PROMPT_VERSION picks one, and every planner.decision log records it.",
+      rows: [
+        ["K", "PROMPT_VERSIONS", "DICT", "Every version by key."],
+        ["R", "v1", "1,536 CHARS", "Seven numbered rules plus priority bands."],
+        ["R", "v1b", "1,027 CHARS", "The same policy in one terse line, for speed."],
+        ["R", "v2", "2,129 CHARS", "First matching rule wins, plus 3 examples. Added 2026-10-01."],
+        ["R", "v2b", "1,742 CHARS", "Battery first, then branch on vision.match. No tool list. Added 2026-10-01."],
+        ["S", "fill {tools}", "str.replace", "Not str.format: the prompts contain JSON braces, and format crashed."],
+        ["S", "design note", "SHORT + DECLARATIVE", "LFM2.5-230M isn’t a reasoning model; avoid “think step by step”."]
+      ],
+      links: [["p_v1", "version v1"], ["p_v1b", "version v1b"], ["p_v2", "version v2"], ["p_v2b", "version v2b"]] },
+
+    { id: "tool_list", lane: "prompts", kind: "prompt", width: 420, title: "PROMPT.TOOL_LIST", file: "generated by mentorpi/planner/tools.py",
+      summary: "What {tools} expands to. Generated from ACTIONS, so it always matches what the action layer accepts.",
+      text: `- navigate_to_zone(zone_id:string∈['zone_a', 'zone_b', 'zone_c', 'zone_d']) — Drive to a named zone and mark it searched.
+- explore_until_found(ttl_seconds:number) — Visit unsearched zones nearest-first until the target is seen or the TTL runs out.
+- approach_target(standoff_meters:number) — Move toward the last sighting and stop at standoff_meters. Requires a recent sighting.
+- reposition_for_concealment() — Move to the nearest configured concealment point.
+- hold_position(seconds:number) — Stay still for \`seconds\` (default 5).
+- scan_with_camera(pan_deg:number, tilt_deg:number) — Pan/tilt the camera (degrees). Legal while driving.`,
+      links: [] },
+
+    { id: "p_v1", lane: "prompts", kind: "prompt", width: 420, title: "PROMPT.V1", file: "PROMPT_VERSIONS[\"v1\"]",
+      summary: "First version: seven numbered rules. On the robot it failed the searching test, answering concealment plus hold. About 3.1–3.3 s per call.",
+      text: `You control a search robot. Choose the next action from the tools below using the state JSON.
+Tools:
+{tools}
+Rules:
+1. No target -> hold_position.
+2. Target set, not seen, zones_unsearched not empty -> explore_until_found (ttl 120-300).
+3. vision.match true AND behavior=follow -> approach_target standoff 1.5, priority 60.
+3b. vision.match true AND behavior=conceal AND not concealed -> reposition_for_concealment, priority 60.
+4. last_sighting_age_s < 20 but match false -> scan_with_camera toward bearing_deg.
+5. All zones searched and not found -> hold_position.
+6. battery_pct < 20 -> reposition_for_concealment then hold_position.
+7. If active goal is progressing (pct rising) and nothing changed -> empty list.
+Priority: routine 10-30, sighting-driven 50-70.
+Output ONLY JSON: {"tool_calls":[{"name":..., "arguments":{...}, "priority":0-79}]}. 0-2 calls. Empty list = keep doing the current goal.`,
+      links: [["tool_list", "{tools}"]] },
+
+    { id: "p_v1b", lane: "prompts", kind: "prompt", width: 420, title: "PROMPT.V1B", file: "PROMPT_VERSIONS[\"v1b\"]",
+      summary: "The v1 policy squeezed into one line for speed. Fastest (about 1.8–2.1 s) but failed the searching test, answering a camera scan.",
+      text: `Search robot planner. Pick tools from:
+{tools}
+Policy: no target=hold. unseen+zones left=explore(ttl 180,p20). seen=approach(1.5,p60). recent sighting lost=scan toward bearing(p40). zones exhausted=hold. battery<20=conceal(p70). active goal progressing=[].
+Output ONLY JSON: {"tool_calls":[{"name":..., "arguments":{...}, "priority":0-79}]}. 0-2 calls. Empty list = keep doing the current goal.`,
+      links: [["tool_list", "{tools}"]] },
+
+    { id: "p_v2", lane: "prompts", kind: "prompt", width: 420, title: "PROMPT.V2", file: "PROMPT_VERSIONS[\"v2\"]",
+      summary: "Ordered rules where the first match wins, plus three examples. Best so far: 4 of 6 checks, but it still chose approach when searching. About 5.3–9 s per call.",
+      text: `You are the planner for a search robot. Read the state JSON and choose the next action.
+Tools:
+{tools}
+Check these rules in order and use the FIRST one that matches:
+1. battery_pct below 20: reposition_for_concealment, priority 70.
+2. vision.match is true and behavior is "conceal" and concealed is false: reposition_for_concealment, priority 60.
+3. vision.match is true: approach_target with standoff_meters 1.5, priority 60.
+4. last_sighting_age_s is a number below 20: scan_with_camera with pan_deg equal to vision.bearing_deg (use 0 if null), priority 40.
+5. goals.active is not empty: answer {"tool_calls":[]} to keep the current goal.
+6. zones_unsearched is not empty: explore_until_found with ttl_seconds 180, priority 20.
+7. Otherwise: hold_position with seconds 10, priority 10.
+Examples:
+State: {"vision":{"match":false},"last_sighting_age_s":null,"zones_unsearched":["zone_a","zone_b"],"battery_pct":80,"behavior":"follow","goals":{"active":[]}}
+Answer: {"tool_calls":[{"name":"explore_until_found","arguments":{"ttl_seconds":180},"priority":20}]}
+State: {"vision":{"match":true,"bearing_deg":12},"battery_pct":80,"behavior":"follow","concealed":false}
+Answer: {"tool_calls":[{"name":"approach_target","arguments":{"standoff_meters":1.5},"priority":60}]}
+State: {"vision":{"match":true,"bearing_deg":-5},"battery_pct":80,"behavior":"conceal","concealed":false}
+Answer: {"tool_calls":[{"name":"reposition_for_concealment","arguments":{},"priority":60}]}
+Reply with only the JSON answer.`,
+      links: [["tool_list", "{tools}"]] },
+
+    { id: "p_v2b", lane: "prompts", kind: "prompt", width: 420, title: "PROMPT.V2B", file: "PROMPT_VERSIONS[\"v2b\"]",
+      summary: "Battery first, then branches on vision.match. Drops the tool list. Scored 2 of 6: it answered reposition_for_concealment for every state.",
+      text: `You are the planner for a search robot. Read the state JSON and choose ONE next action.
+Step 1. If battery_pct is below 20: reposition_for_concealment, priority 70. Stop.
+Step 2. Look at vision.match.
+If vision.match is false, you can NOT see the target. Never use approach_target.
+  a. If last_sighting_age_s is a number below 20: scan_with_camera with pan_deg 0, priority 40.
+  b. Else if goals.active is not empty: answer {"tool_calls":[]}.
+  c. Else: explore_until_found with ttl_seconds 180, priority 20.
+If vision.match is true, you CAN see the target.
+  a. If behavior is "conceal" and concealed is false: reposition_for_concealment, priority 60.
+  b. Else: approach_target with standoff_meters 1.5, priority 60.
+Examples:
+State: {"target":"person in a red jacket","mission":"SEARCHING","vision":{"match":false,"conf":0.1,"bearing_deg":null},"last_sighting_age_s":null,"zones_unsearched":["zone_a","zone_b"],"battery_pct":80,"behavior":"follow","concealed":false,"goals":{"active":[]}}
+Answer: {"tool_calls":[{"name":"explore_until_found","arguments":{"ttl_seconds":180},"priority":20}]}
+State: {"target":"blue backpack","mission":"TRACKING","vision":{"match":true,"conf":0.9,"bearing_deg":12},"last_sighting_age_s":0.5,"battery_pct":80,"behavior":"follow","concealed":false,"goals":{"active":[]}}
+Answer: {"tool_calls":[{"name":"approach_target","arguments":{"standoff_meters":1.5},"priority":60}]}
+State: {"target":"blue backpack","mission":"TRACKING","vision":{"match":true,"conf":0.9,"bearing_deg":-5},"last_sighting_age_s":0.5,"battery_pct":80,"behavior":"conceal","concealed":false,"goals":{"active":[]}}
+Answer: {"tool_calls":[{"name":"reposition_for_concealment","arguments":{},"priority":60}]}
+Reply with only the JSON answer.`,
+      links: [] },
+
+    /* ---------------- Layer 3 Actions ---------------- */
+    { id: "manager", lane: "actions", title: "ACTIONS.MANAGER", file: "mentorpi/actions/manager.py",
+      summary: "Layer 3 core. Accepts goals, decides who gets the chassis and the camera, preempts lower priorities, expires stale goals and runs recall.",
+      rows: [
+        ["C", "ActionManager", "CORE", ""],
+        ["F", "submit(goal)", "START | QUEUE | REJECT", "Validates, then starts at once if every resource is free or held by a lower priority; otherwise queues."],
+        ["S", "resource locks", "chassis, pan_tilt", "Two independent mutexes, so the camera can scan while driving."],
+        ["S", "preemption", "HIGHER WINS", "A strictly higher priority aborts the holder with preempted_by_higher_priority."],
+        ["T", "tick", "5 Hz", "Steps executors, expires goals past evidence_ts + ttl, promotes the queue highest first."],
+        ["F", "recall()", "PRIORITY 95", "Cancels everything, blocks the planner and holds position. Driving home is still a TODO."],
+        ["S", "feedback", "LIVE", "distance_remaining_m, percent_complete and elapsed_s for the dashboard."],
+        ["K", "priority bands", "0–79 | 95", "Planner 0–79, recall 95. Safety has no priority because it isn’t a goal."]
+      ],
+      links: [["validation", "checks first"], ["registry", "records every change"], ["executors", "runs one per goal"]] },
+
+    { id: "goal", lane: "actions", title: "ACTIONS.GOAL", file: "mentorpi/actions/goal.py",
+      summary: "The Goal data structure, its states, the reason strings, and ACTIONS: the vocabulary the planner is allowed to use.",
+      rows: [
+        ["C", "Goal", "DATACLASS", "action, params, priority, ttl, evidence_ts, plus state, reason and detail."],
+        ["K", "ACTIONS", "VOCABULARY", "Each action’s parameters and the resources it needs. The planner’s tools come from here."],
+        ["K", "navigate_to_zone", "CHASSIS", "zone_id: one of the configured zones."],
+        ["K", "explore_until_found", "CHASSIS", "ttl_seconds 10–900."],
+        ["K", "approach_target", "CHASSIS", "standoff_meters 0.5–5.0. Needs a recent sighting."],
+        ["K", "reposition_for_concealment", "CHASSIS", "No parameters."],
+        ["K", "hold_position", "CHASSIS", "seconds 1–120, default 5. Doesn’t move."],
+        ["K", "scan_with_camera", "PAN_TILT", "pan_deg, optional tilt_deg. Camera only."],
+        ["K", "reason strings", "TEXT", "Why a goal ended: succeeded, ttl_expired, preempted_by_higher_priority, safety_stop, target_lost and more."]
+      ],
+      links: [] },
+
+    { id: "validation", lane: "actions", title: "ACTIONS.VALIDATION", file: "mentorpi/actions/validation.py",
+      summary: "Rejects a goal at submission with a specific reason, before it can touch a resource.",
+      rows: [
+        ["S", "unknown_action", "REJECT", "Not in ACTIONS."],
+        ["S", "invalid_params", "REJECT", "Missing or out-of-range parameters."],
+        ["S", "unknown_zone", "REJECT", ""],
+        ["S", "outside_geofence", "REJECT", ""],
+        ["S", "insufficient_battery", "REJECT", ""],
+        ["S", "recall_active", "REJECT", "Operator recall blocks new planner goals."],
+        ["S", "no_recent_sighting", "REJECT", "approach_target needs a fresh sighting."],
+        ["S", "duplicate_goal, queue_full", "REJECT", ""]
+      ],
+      links: [["goal", "reason strings"], ["geometry", "geofence test"], ["state", "battery, sighting age"]] },
+
+    { id: "registry", lane: "actions", title: "ACTIONS.REGISTRY", file: "mentorpi/actions/registry.py",
+      summary: "In-memory goal history and the only place a goal’s state changes, so every transition is logged exactly once.",
+      rows: [
+        ["C", "GoalRegistry", "BOUNDED", "Keeps recent goals; the dashboard shows the last 50."],
+        ["S", "transition", "→ LOG", "Records from, to, reason and detail as goal.transition."],
+        ["S", "active, pending, history", "→ BRIDGE", "What /api/goals reports."]
+      ],
+      links: [["goal", "stores"]] },
+
+    { id: "executors", lane: "actions", title: "ACTIONS.EXECUTORS", file: "mentorpi/actions/executors.py",
+      summary: "One small, non-blocking state machine per action, plus the Nav2 wrapper.",
+      rows: [
+        ["C", "Executor", "STATE MACHINE", "start, tick and cancel. Never blocks."],
+        ["C", "_NavLeg", "NAV2 WRAPPER", "Sends one NavigateToPose goal and watches its progress."],
+        ["S", "navigate, explore, approach", "CHASSIS", "Drive to a zone, visit unsearched zones nearest-first, or move toward the last sighting."],
+        ["S", "conceal, hold", "CHASSIS", "Move to the nearest concealment point, or stay still."],
+        ["S", "scan", "PAN_TILT", "Point the camera. Allowed while driving."]
+      ],
+      links: [["interface", "drives the robot"]] },
+
+    /* ---------------- Robot and Layer 4 Safety ---------------- */
+    { id: "interface", lane: "robot", title: "ROBOT.INTERFACE", file: "mentorpi/robot/interface.py",
+      summary: "RobotInterface: the only door to the hardware. Every layer goes through it, so the code above is identical on the real car and the fake one.",
+      rows: [
+        ["C", "RobotInterface", "ABSTRACT", ""],
+        ["S", "camera frame", "← CAMERA", ""],
+        ["S", "lidar scan", "← LIDAR", ""],
+        ["S", "pose and battery", "← ODOM", ""],
+        ["S", "navigate to pose", "→ NAV2", ""],
+        ["F", "publish_cmd_vel", "→ MOTORS", "Dropped while the safety gate is closed."],
+        ["F", "set_pan_tilt", "→ SERVO", "Points the camera."]
+      ],
+      links: [] },
+
+    { id: "safety", lane: "robot", title: "SAFETY.SAFETY_FLOOR", file: "mentorpi/safety/safety_floor.py",
+      summary: "Layer 4, beneath everything. The model has wide freedom over strategy and none over this layer: it isn’t a tool, isn’t a goal and can’t be switched off.",
+      rows: [
+        ["C", "SafetyFloor", "NOT A GOAL", ""],
+        ["T", "watchdog", "10 Hz", "Also runs on every lidar message."],
+        ["S", "lidar stop", "OBSTACLE", "Something too close: stop."],
+        ["S", "geofence", "POLYGON", "Outside the allowed area: stop."],
+        ["S", "lidar timeout", "1 s → STOP", "No lidar for a second means stop. Fail closed."],
+        ["S", "close cmd_vel gate", "+ ZEROS", "Stops the motors directly. Cancelling goals is bookkeeping that happens afterwards."]
+      ],
+      links: [["interface", "closes gate, sends zeros"], ["manager", "aborts chassis goals"], ["geometry", "geofence"], ["state", "stop_active, reason"]] },
+
+    { id: "ros2_robot", lane: "robot", title: "ROBOT.ROS2_ROBOT", file: "mentorpi/robot/ros2_robot.py",
+      summary: "The real robot. Only imported when stub mode is off. Written against rclpy Humble but not yet run on hardware in v1.",
+      rows: [
+        ["C", "Ros2Robot", "rclpy NODE", ""],
+        ["T", "ros-executor", "2 WORKERS", "The only thread that calls rclpy."],
+        ["S", "subscriptions", "QoS", "Lidar, camera, odometry, battery. QoS mismatches on /scan are the usual first fix."],
+        ["S", "NavigateToPose", "ACTION CLIENT", "Sends Nav2 goals."],
+        ["S", "cmd_vel gate", "RELAY", "Passes Nav2’s output to the motors only while the safety floor allows it."],
+        ["F", "_decode", "IMAGE", "Converts camera images; handles bgr8, rgb8 and mono8."],
+        ["F", "set_pan_tilt", "LOGS ONLY", "Servo topic still TODO(hw)."]
+      ],
+      links: [["interface", "implements"]] },
+
+    { id: "stub_robot", lane: "robot", title: "ROBOT.STUB_ROBOT", file: "mentorpi/robot/stub_robot.py",
+      summary: "A fake robot, fake vision model and scripted fake planner. No ROS2 anywhere, so the whole backend runs on a laptop.",
+      rows: [
+        ["S", "synthetic robot", "10 Hz", "Fake pose, lidar, battery and camera. The target sits near zone_b."],
+        ["C", "StubVlm", "FAILS ~5%", "Fails on purpose so the error paths get exercised."],
+        ["C", "StubPlanner", "FAILS ~2%", "Same idea for the planner."],
+        ["S", "random obstacles", "SAFETY TEST", "Now and then triggers ABORTED / safety_stop."]
+      ],
+      links: [["interface", "implements"]] },
+
+    /* ---------------- Layer 5 Bridge and tests ---------------- */
+    { id: "http", lane: "bridge", title: "BRIDGE.HTTP_SERVER", file: "mentorpi/bridge/http_server.py",
+      summary: "Layer 5. The fixed HTTP contract the dashboard reads, with CORS on every reply. Runs in its own thread.",
+      rows: [
+        ["E", "GET /api/state", "JSON", "Mission, battery, pose, zones, last sighting, health, safety, last planner decision."],
+        ["E", "GET /api/goals", "JSON", "Active goal with live feedback, the queue and history."],
+        ["E", "GET /api/vision", "JSON", "Latest match, confidence, box, bearing and source."],
+        ["E", "GET /camera/stream", "MJPEG", "Live camera, with capped frame rate and width."],
+        ["E", "POST /api/target", "{target}", "Cancels live goals, resets zones, mission → SEARCHING."],
+        ["E", "POST /api/behavior", "follow | conceal", "What to do on contact."],
+        ["E", "POST /api/recall", "", "Cancels everything and holds at priority 95."],
+        ["E", "/api/debug/*", "BRING-UP", "Submit a goal by hand or dump config. MENTORPI_DEBUG=0 turns these off."]
+      ],
+      links: [["adapter", "shapes every reply"], ["manager", "target, recall"], ["state", "reads snapshot"]] },
+
+    { id: "adapter", lane: "bridge", title: "BRIDGE.DASHBOARD_ADAPTER", file: "mentorpi/bridge/dashboard_adapter.py",
+      summary: "Translates the backend’s internal data into the exact shape the dashboard expects. The only place the two formats meet.",
+      rows: [
+        ["S", "timestamps", "→ ms", "Internal seconds become integer milliseconds."],
+        ["S", "component health", "{status, since…}", "Keyed ros2_core, planner_llm, vision_llm, nav2, camera."],
+        ["S", "goals", "active + queue", "One active goal (or null) plus a queue array."],
+        ["S", "bbox", "{x_min…}", "Array becomes {x_min, y_min, x_max, y_max}."]
+      ],
+      links: [["state", "reads"], ["registry", "goal history"]] },
+
+    { id: "tests", lane: "bridge", title: "TESTS/", file: "tests/",
+      summary: "pytest suite that runs without ROS2 or a robot. 41 tests in v1, about 1.5 s.",
+      rows: [
+        ["S", "action layer", "25 TESTS", ""],
+        ["S", "parsers", "VLM + PLANNER", "Including the fail-closed cases."],
+        ["S", "geometry", "POLYGONS", ""],
+        ["S", "run", "pytest -q", "python3 -m pytest -q"]
+      ],
+      links: [] }
+  ]
+};
+/* ======================= end of DIAGRAM DATA ======================= */
+
+(() => {
+  const STORE = "mentorpi-diagram-v1";
+  const $ = (id) => document.getElementById(id);
+  const viewport = $("viewport"), world = $("world"), svg = $("edges"),
+        boxesEl = $("boxes"), lanesEl = $("lanes"), labelsEl = $("elabels"),
+        panel = $("panel"), tree = $("tree"), tip = $("tip");
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+
+  let data = load();
+  let els = {};             // id -> element
+  let view = { s: 1, tx: 0, ty: 0 };
+  let sel = null, selRow = null, query = "";
+
+  function load() {
+    try {
+      const s = localStorage.getItem(STORE);
+      if (s) { const d = JSON.parse(s); if (valid(d) === true) return d; }
+    } catch (e) {}
+    return clone(DIAGRAM);
+  }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch (e) {} }
+  function valid(d) {
+    if (!d || typeof d !== "object") return "The data must be one JSON object.";
+    if (!Array.isArray(d.lanes)) return "Missing \"lanes\": a list of {id, name}.";
+    if (!Array.isArray(d.boxes)) return "Missing \"boxes\": a list of boxes.";
+    const seen = new Set();
+    for (const b of d.boxes) {
+      if (!b || !b.id) return "Every box needs an \"id\".";
+      if (seen.has(b.id)) return `Two boxes share the id “${b.id}”. Give each a unique id.`;
+      seen.add(b.id);
+      if (!b.title) return `Box “${b.id}” needs a "title".`;
+      if (b.rows && !Array.isArray(b.rows)) return `Box “${b.id}”: "rows" must be a list.`;
+      if (b.links && !Array.isArray(b.links)) return `Box “${b.id}”: "links" must be a list.`;
+    }
+    return true;
+  }
+  const byId = () => Object.fromEntries(data.boxes.map((b) => [b.id, b]));
+  function rowsOf(b) {
+    if (b.rows && b.rows.length) return b.rows;
+    if (b.text) return b.text.split("\n").filter((l) => l.trim()).map((l) => ["R", l.replace(/\s+$/, ""), "", ""]);
+    return [];
+  }
+
+  /* ---------- rendering ---------- */
+  const linkIcon = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x=".5" y=".5" width="9" height="9"/><path d="M3 5h4M5 3v4"/></svg>';
+
+  function buildBox(b, idx) {
+    const el = document.createElement("div");
+    el.className = "box " + (b.kind || "module");
+    el.dataset.id = b.id;
+    if (b.width) el.style.width = b.width + "px";
+    const h = document.createElement("div");
+    h.className = "hdr"; h.textContent = b.title;
+    el.appendChild(h);
+    const rows = rowsOf(b);
+    if (rows.length) {
+      const r = document.createElement("div"); r.className = "rows";
+      rows.forEach((row, i) => {
+        const d = document.createElement("div");
+        d.className = "row"; d.dataset.i = i;
+        const k = String(row[0] || "").slice(0, 1).toUpperCase();
+        d.innerHTML = `<span class="k k-${k}"></span><span class="n"></span><span class="t"></span>`;
+        d.children[0].textContent = k;
+        d.children[1].textContent = row[1] || "";
+        d.children[2].textContent = row[2] || "";
+        r.appendChild(d);
+      });
+      el.appendChild(r);
+    }
+    const links = (b.links || []).filter((l) => l && l[0]);
+    if (links.length) {
+      const map = byId();
+      const f = document.createElement("div"); f.className = "links";
+      links.forEach((lk, j) => {
+        const d = document.createElement("div");
+        d.className = "lk"; d.dataset.j = j;
+        d.innerHTML = `<span>${linkIcon}</span><span class="n"></span><span class="t"></span>`;
+        d.children[1].textContent = "→ " + (map[lk[0]] ? map[lk[0]].title : lk[0] + " (missing)");
+        d.children[2].textContent = lk[1] || "";
+        f.appendChild(d);
+      });
+      el.appendChild(f);
+    }
+    return el;
+  }
+
+  function render() {
+    boxesEl.innerHTML = ""; els = {};
+    data.boxes.forEach((b, i) => { const el = buildBox(b, i); boxesEl.appendChild(el); els[b.id] = el; });
+    layout();
+    data.boxes.forEach((b) => place(b));
+    drawAll();
+    renderTree();
+    renderPanel();
+    $("stCount").textContent = `${data.boxes.length} boxes, ${data.boxes.reduce((n, b) => n + (b.links || []).length, 0)} links`;
+  }
+
+  function layout() {
+    const laneIds = data.lanes.map((l) => l.id);
+    const extra = data.boxes.filter((b) => !laneIds.includes(b.lane));
+    const lanes = data.lanes.map((l) => ({ ...l, boxes: data.boxes.filter((b) => b.lane === l.id) }));
+    if (extra.length) lanes.push({ id: "__other", name: "Other", boxes: extra });
+    let x = 40;
+    lanes.forEach((lane) => {
+      const w = Math.max(260, ...lane.boxes.map((b) => els[b.id].offsetWidth));
+      let y = 80;
+      lane.boxes.forEach((b) => {
+        const h = els[b.id].offsetHeight;
+        if (b.x == null || b.y == null) { b.x = x; b.y = y; b._auto = true; }
+        if (b.x >= x - 1 && b.x <= x + 1) y = Math.max(y, b.y + h + 34);
+      });
+      x += w + 110;
+    });
+  }
+  function place(b) { const el = els[b.id]; el.style.left = b.x + "px"; el.style.top = b.y + "px"; }
+
+  function geom(b) { const el = els[b.id]; return { x: b.x, y: b.y, w: el.offsetWidth, h: el.offsetHeight }; }
+
+  function curve(a, b, ay) {
+    const ty = b.y + 11;
+    let p1, p2, c1, c2;
+    if (b.x > a.x + a.w + 16) {
+      p1 = [a.x + a.w, ay]; p2 = [b.x, ty];
+      const d = Math.max(40, (p2[0] - p1[0]) * 0.45);
+      c1 = [p1[0] + d, p1[1]]; c2 = [p2[0] - d, p2[1]];
+    } else if (b.x + b.w < a.x - 16) {
+      p1 = [a.x, ay]; p2 = [b.x + b.w, ty];
+      const d = Math.max(40, (p1[0] - p2[0]) * 0.45);
+      c1 = [p1[0] - d, p1[1]]; c2 = [p2[0] + d, p2[1]];
+    } else {
+      p1 = [a.x + a.w, ay]; p2 = [b.x + b.w, ty];
+      const edge = Math.max(p1[0], p2[0]) + 36 + Math.min(110, Math.abs(ty - ay) * 0.12);
+      c1 = [edge, p1[1]]; c2 = [edge, p2[1]];
+    }
+    const mid = bez(p1, c1, c2, p2, 0.5);
+    return { d: `M${p1[0]},${p1[1]} C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${p2[0]},${p2[1]}`, mid };
+  }
+  function bez(p0, p1, p2, p3, t) {
+    const u = 1 - t;
+    return [0, 1].map((k) => u*u*u*p0[k] + 3*u*u*t*p1[k] + 3*u*t*t*p2[k] + t*t*t*p3[k]);
+  }
+
+  function edgesList() {
+    const map = byId(), out = [];
+    data.boxes.forEach((b) => (b.links || []).forEach((lk, j) => {
+      if (lk && map[lk[0]]) out.push({ from: b.id, to: lk[0], j, label: lk[1] || "", dashed: lk[2] === "dashed" });
+    }));
+    return out;
+  }
+
+  function drawAll() {
+    const map = byId();
+    const edges = edgesList();
+    const connected = new Set();
+    if (sel) { connected.add(sel); edges.forEach((e) => { if (e.from === sel) connected.add(e.to); if (e.to === sel) connected.add(e.from); }); }
+
+    let html = `<defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z"/></marker>
+      <marker id="arrow-hi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z"/></marker></defs>`;
+    labelsEl.innerHTML = "";
+    edges.forEach((e) => {
+      const a = geom(map[e.from]), b = geom(map[e.to]);
+      const lkEl = els[e.from].querySelector(`.lk[data-j="${e.j}"]`);
+      const ay = a.y + (lkEl ? lkEl.offsetTop + lkEl.offsetHeight / 2 + 1 : 11);
+      const c = curve(a, b, ay);
+      const hi = sel && (e.from === sel || e.to === sel);
+      const cls = sel ? (hi ? "hi" : "dim") : "";
+      html += `<g class="${cls}"><path class="vis${e.dashed ? " dashed" : ""}" d="${c.d}" marker-end="url(#${hi ? "arrow-hi" : "arrow"})"/>` +
+              `<path class="hit" d="${c.d}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" data-label="${esc(e.label)}"/></g>`;
+      if (hi && e.label) {
+        const l = document.createElement("div");
+        l.className = "elabel"; l.textContent = e.label;
+        l.style.left = c.mid[0] + "px"; l.style.top = c.mid[1] + "px";
+        labelsEl.appendChild(l);
+      }
+    });
+    svg.innerHTML = html;
+
+    // box classes
+    const q = query.trim().toLowerCase();
+    data.boxes.forEach((b) => {
+      const el = els[b.id];
+      el.classList.toggle("sel", b.id === sel);
+      el.classList.toggle("dim", !!sel && !connected.has(b.id) || (!!q && !matches(b, q)));
+      el.classList.toggle("match", !!q && matches(b, q));
+      el.querySelectorAll(".row.on").forEach((r) => r.classList.remove("on"));
+      if (b.id === sel && selRow != null) { const r = el.querySelector(`.row[data-i="${selRow}"]`); if (r) r.classList.add("on"); }
+    });
+
+    // lane labels
+    lanesEl.innerHTML = "";
+    data.lanes.forEach((lane) => {
+      const bs = data.boxes.filter((b) => b.lane === lane.id);
+      if (!bs.length) return;
+      const x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+      const l = document.createElement("div");
+      l.className = "lane-label"; l.textContent = lane.name;
+      l.style.left = x + "px"; l.style.top = (y - 30) + "px";
+      lanesEl.appendChild(l);
+    });
+  }
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+  function matches(b, q) {
+    const hay = [b.title, b.file, b.summary, b.text, ...(rowsOf(b).flat())].join(" ").toLowerCase();
+    return hay.includes(q);
+  }
+
+  /* ---------- sidebar tree ---------- */
+  const openLanes = new Set(DIAGRAM.lanes.map((l) => l.id));
+  function renderTree() {
+    tree.innerHTML = "";
+    const q = query.trim().toLowerCase();
+    const chev = '<svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 2l3 3-3 3"/></svg>';
+    let shown = 0;
+    const lanes = [...data.lanes];
+    const known = new Set(lanes.map((l) => l.id));
+    if (data.boxes.some((b) => !known.has(b.lane))) lanes.push({ id: "__other", name: "Other" });
+    lanes.forEach((lane) => {
+      const bs = data.boxes.filter((b) => (lane.id === "__other" ? !known.has(b.lane) : b.lane === lane.id) && (!q || matches(b, q)));
+      if (!bs.length) return;
+      shown += bs.length;
+      const det = document.createElement("details");
+      det.open = !!q || openLanes.has(lane.id);
+      det.addEventListener("toggle", () => { det.open ? openLanes.add(lane.id) : openLanes.delete(lane.id); });
+      const sum = document.createElement("summary");
+      sum.innerHTML = chev + '<span class="ln"></span><span class="count"></span>';
+      sum.querySelector(".ln").textContent = lane.name;
+      sum.querySelector(".count").textContent = bs.length;
+      det.appendChild(sum);
+      bs.forEach((b) => {
+        const it = document.createElement("button");
+        it.type = "button"; it.className = "item" + (b.id === sel ? " sel" : "");
+        const sw = document.createElement("span"); sw.className = "swatch";
+        sw.style.background = b.kind === "prompt" ? "var(--hdr-prompt)" : b.kind === "external" ? "var(--hdr-ext)" : "var(--hdr)";
+        const t = document.createElement("span"); t.textContent = b.title;
+        it.append(sw, t);
+        it.addEventListener("click", () => { focusBox(b.id); if (window.matchMedia("(max-width:820px)").matches) toggleSidebar(false); });
+        det.appendChild(it);
+      });
+      tree.appendChild(det);
+    });
+    if (!shown) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = q ? `Nothing matches “${query.trim()}”. Try a file name, setting or prompt word.` : "No boxes yet. Add one with Edit data.";
+      tree.appendChild(e);
+    }
+  }
+
+  /* ---------- details panel ---------- */
+  function renderPanel() {
+    const map = byId();
+    const b = sel && map[sel];
+    if (!b) { panel.classList.remove("open"); panel.innerHTML = ""; return; }
+    panel.classList.add("open");
+    panel.innerHTML = "";
+    const head = document.createElement("div"); head.className = "p-head";
+    const tt = document.createElement("div"); tt.className = "p-title";
+    const h2 = document.createElement("h2"); h2.textContent = b.title;
+    const file = document.createElement("div"); file.className = "file mono"; file.textContent = b.file || "";
+    const chip = document.createElement("span"); chip.className = "chip";
+    chip.textContent = b.kind === "prompt" ? "Prompt" : b.kind === "external" ? "Server" : "Code";
+    chip.style.background = b.kind === "prompt" ? "var(--hdr-prompt)" : b.kind === "external" ? "var(--hdr-ext)" : "var(--hdr)";
+    tt.append(h2, file, chip);
+    const close = document.createElement("button"); close.className = "p-close"; close.setAttribute("aria-label", "Close details");
+    close.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>';
+    close.addEventListener("click", () => select(null));
+    head.append(tt, close);
+    const body = document.createElement("div"); body.className = "p-body";
+    if (b.summary) { const p = document.createElement("p"); p.className = "summary"; p.textContent = b.summary; body.appendChild(p); }
+
+    if (b.kind === "prompt") {
+      sec(body, "PROMPT TEXT");
+      if (b.text) {
+        const c = document.createElement("div"); c.className = "code";
+        const pre = document.createElement("pre"); pre.className = "mono"; pre.textContent = b.text;
+        const cp = document.createElement("button"); cp.className = "copy"; cp.type = "button"; cp.textContent = "Copy";
+        cp.addEventListener("click", () => copyText(b.text).then((ok) => { cp.textContent = ok ? "Copied" : "Select and copy"; setTimeout(() => (cp.textContent = "Copy"), 1500); }));
+        c.append(pre, cp); body.appendChild(c);
+      } else {
+        const m = document.createElement("div"); m.className = "missing";
+        m.textContent = b.note || "No prompt text yet. Add it to this box’s \"text\" field with Edit data.";
+        body.appendChild(m);
+      }
+    }
+
+    const rows = rowsOf(b);
+    const showRows = b.kind !== "prompt" || (b.rows && b.rows.length);
+    if (rows.length && showRows) {
+      sec(body, "WHAT EACH PART DOES");
+      rows.forEach((r, i) => {
+        const d = document.createElement("div"); d.className = "p-row" + (i === selRow ? " on" : ""); d.dataset.i = i;
+        const k = String(r[0] || "").slice(0, 1).toUpperCase();
+        d.innerHTML = `<span class="k mono k-${k}" style="font-weight:700;font-size:11px"></span><div><span class="nm"></span><span class="ty"></span></div><div class="ds"></div>`;
+        d.children[0].textContent = k;
+        d.querySelector(".nm").textContent = r[1] || "";
+        d.querySelector(".ty").textContent = r[2] || "";
+        d.querySelector(".ds").textContent = r[3] || "";
+        d.addEventListener("click", () => { selRow = i; drawAll(); panel.querySelectorAll(".p-row").forEach((x) => x.classList.toggle("on", x === d)); });
+        body.appendChild(d);
+      });
+    }
+
+    const outs = (b.links || []).filter((l) => l && l[0]);
+    if (outs.length) {
+      sec(body, "CONNECTS TO");
+      outs.forEach((l) => body.appendChild(linkBtn(map[l[0]], l[0], l[1], l[2] === "dashed")));
+    }
+    const ins = [];
+    data.boxes.forEach((o) => (o.links || []).forEach((l) => { if (l && l[0] === b.id) ins.push([o, l[1]]); }));
+    if (ins.length) {
+      sec(body, "USED BY");
+      ins.forEach(([o, lbl]) => body.appendChild(linkBtn(o, o.id, lbl)));
+    }
+    panel.append(head, body);
+    if (selRow != null) { const r = body.querySelector(`.p-row[data-i="${selRow}"]`); if (r) r.scrollIntoView({ block: "nearest" }); }
+  }
+  function sec(parent, txt) { const s = document.createElement("div"); s.className = "p-sec"; s.textContent = txt; parent.appendChild(s); }
+  function linkBtn(target, id, label, dashed) {
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "p-link";
+    const n = document.createElement("span"); n.className = "mono"; n.style.fontSize = "11.5px";
+    n.textContent = target ? target.title : id + " (missing)";
+    const l = document.createElement("span"); l.className = "lbl"; l.textContent = (label || "") + (dashed ? " (network)" : "");
+    btn.append(n, l);
+    if (target) btn.addEventListener("click", () => focusBox(target.id));
+    return btn;
+  }
+
+  function select(id, row = null) {
+    sel = id; selRow = row;
+    drawAll(); renderPanel(); renderTree();
+  }
+
+  /* ---------- view: pan and zoom ---------- */
+  function applyView() {
+    world.style.transform = `translate(${view.tx}px,${view.ty}px) scale(${view.s})`;
+    const g = 20 * view.s;
+    viewport.style.backgroundSize = `${g}px ${g}px`;
+    viewport.style.backgroundPosition = `${view.tx}px ${view.ty}px`;
+    $("stZoom").textContent = Math.round(view.s * 100) + "%";
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  function zoomAt(f, cx, cy) {
+    const s2 = clamp(view.s * f, 0.12, 2.5), k = s2 / view.s;
+    view.tx = cx - (cx - view.tx) * k; view.ty = cy - (cy - view.ty) * k; view.s = s2; applyView();
+  }
+  function zoomCenter(f) { const r = viewport.getBoundingClientRect(); zoomAt(f, r.width / 2, r.height / 2); }
+  function bounds() {
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    data.boxes.forEach((b) => { const g = geom(b); x1 = Math.min(x1, g.x); y1 = Math.min(y1, g.y - 34); x2 = Math.max(x2, g.x + g.w + 60); y2 = Math.max(y2, g.y + g.h); });
+    if (!isFinite(x1)) return { x1: 0, y1: 0, x2: 800, y2: 600 };
+    return { x1, y1, x2, y2 };
+  }
+  function fit(minS = 0) {
+    const r = viewport.getBoundingClientRect(), bb = bounds();
+    const bw = bb.x2 - bb.x1, bh = bb.y2 - bb.y1, pad = 24;
+    let s = Math.min((r.width - pad * 2) / bw, (r.height - pad * 2) / bh);
+    s = clamp(Math.max(s, minS), 0.12, 1);
+    view.s = s;
+    view.tx = bw * s < r.width ? (r.width - bw * s) / 2 - bb.x1 * s : pad - bb.x1 * s;
+    view.ty = bh * s < r.height ? (r.height - bh * s) / 2 - bb.y1 * s : pad - bb.y1 * s;
+    applyView();
+  }
+  function focusBox(id) {
+    const b = byId()[id]; if (!b) return;
+    select(id);
+    requestAnimationFrame(() => {
+      const r = viewport.getBoundingClientRect(), g = geom(b);
+      if (view.s < 0.7) view.s = 0.85;
+      view.tx = r.width / 2 - (g.x + g.w / 2) * view.s;
+      view.ty = Math.min(r.height / 2 - (g.y + g.h / 2) * view.s, 60 - g.y * view.s);
+      applyView();
+    });
+  }
+
+  /* ---------- pointer handling ---------- */
+  const pointers = new Map();
+  let act = null, pinch = null, raf = 0;
+  const local = (e) => { const r = viewport.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  function scheduleDraw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; drawAll(); }); }
+
+  viewport.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    viewport.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, local(e));
+    hideTip();
+    if (pointers.size === 2) {
+      const [p, q] = [...pointers.values()];
+      pinch = { d: Math.hypot(p[0] - q[0], p[1] - q[1]), s: view.s, tx: view.tx, ty: view.ty, m: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] };
+      if (act && act.box) els[act.box].classList.remove("dragging");
+      act = null; return;
+    }
+    const boxEl = e.target.closest(".box");
+    const rowEl = e.target.closest(".row");
+    const lkEl = e.target.closest(".lk");
+    const hit = e.target.closest("path.hit");
+    const p = local(e);
+    if (boxEl) {
+      const b = byId()[boxEl.dataset.id];
+      act = { box: b.id, sx: p[0], sy: p[1], bx: b.x, by: b.y, moved: false, row: rowEl ? +rowEl.dataset.i : null, lk: lkEl ? +lkEl.dataset.j : null };
+    } else {
+      act = { pan: true, sx: p[0], sy: p[1], tx: view.tx, ty: view.ty, moved: false, hit: hit ? hit.dataset.from : null };
+    }
+  });
+  viewport.addEventListener("pointermove", (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, local(e));
+    if (pinch && pointers.size === 2) {
+      const [p, q] = [...pointers.values()];
+      const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+      const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      const s2 = clamp(pinch.s * d / pinch.d, 0.12, 2.5), k = s2 / pinch.s;
+      view.s = s2;
+      view.tx = m[0] - (pinch.m[0] - pinch.tx) * k;
+      view.ty = m[1] - (pinch.m[1] - pinch.ty) * k;
+      applyView(); return;
+    }
+    if (!act) { hoverTip(e); return; }
+    const p = local(e), dx = p[0] - act.sx, dy = p[1] - act.sy;
+    if (!act.moved && Math.hypot(dx, dy) < 4) return;
+    if (!act.moved) { act.moved = true; if (act.box) els[act.box].classList.add("dragging"); else viewport.classList.add("panning"); }
+    if (act.box) {
+      const b = byId()[act.box];
+      b.x = Math.round(act.bx + dx / view.s); b.y = Math.round(act.by + dy / view.s); delete b._auto;
+      place(b); scheduleDraw();
+    } else {
+      view.tx = act.tx + dx; view.ty = act.ty + dy; applyView();
+    }
+  });
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pinch) { if (pointers.size < 2) pinch = null; act = null; return; }
+    if (!act) return;
+    if (act.box) {
+      els[act.box].classList.remove("dragging");
+      if (act.moved) save();
+      else if (act.lk != null) { const lk = (byId()[act.box].links || [])[act.lk]; if (lk && byId()[lk[0]]) focusBox(lk[0]); }
+      else select(act.box, act.row);
+    } else {
+      viewport.classList.remove("panning");
+      if (!act.moved) select(act.hit || null);
+    }
+    act = null;
+  }
+  viewport.addEventListener("pointerup", endPointer);
+  viewport.addEventListener("pointercancel", endPointer);
+  viewport.addEventListener("pointerleave", (e) => { if (!act) hideTip(); });
+
+  viewport.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const [cx, cy] = local(e);
+    if (e.ctrlKey || e.metaKey) { zoomAt(Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0025)), cx, cy); }
+    else {
+      const m = e.deltaMode === 1 ? 16 : 1;
+      view.tx -= (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * m;
+      view.ty -= (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * m;
+      applyView();
+    }
+  }, { passive: false });
+
+  /* ---------- tooltip ---------- */
+  function hoverTip(e) {
+    const map = byId();
+    const row = e.target.closest(".row"), lk = e.target.closest(".lk"), hit = e.target.closest("path.hit");
+    let name = "", desc = "";
+    if (row) {
+      const b = map[row.closest(".box").dataset.id]; const r = rowsOf(b)[+row.dataset.i];
+      if (!r) return hideTip();
+      name = r[1]; desc = r[3] || (r[2] ? r[2] : "");
+      if (b.kind === "prompt" && !(b.rows && b.rows.length)) desc = "Click to see the full prompt.";
+    } else if (lk) {
+      const b = map[lk.closest(".box").dataset.id]; const l = b.links[+lk.dataset.j];
+      name = `${b.title} → ${map[l[0]] ? map[l[0]].title : l[0]}`; desc = (l[1] || "") + (l[2] === "dashed" ? " (network call)" : "") + ". Click to jump there.";
+    } else if (hit) {
+      const a = map[hit.dataset.from], b = map[hit.dataset.to];
+      name = `${a.title} → ${b.title}`; desc = hit.dataset.label;
+    } else return hideTip();
+    tip.innerHTML = '<div class="tn"></div><div class="td"></div>';
+    tip.children[0].textContent = name; tip.children[1].textContent = desc;
+    tip.style.display = "block";
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = e.clientX + 14, y = e.clientY + 16;
+    if (x + w > innerWidth - 8) x = e.clientX - w - 10;
+    if (y + h > innerHeight - 8) y = e.clientY - h - 10;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  function hideTip() { tip.style.display = "none"; }
+
+  /* ---------- toolbar ---------- */
+  function toggleSidebar(force) {
+    const sb = $("sidebar"), on = force ?? sb.classList.contains("hidden");
+    sb.classList.toggle("hidden", !on);
+    $("tbSidebar").classList.toggle("on", on);
+    $("tbSidebar").setAttribute("aria-pressed", on);
+  }
+  $("tbSidebar").addEventListener("click", () => toggleSidebar());
+  $("tbZoomIn").addEventListener("click", () => zoomCenter(1.2));
+  $("tbZoomOut").addEventListener("click", () => zoomCenter(1 / 1.2));
+  $("tbFit").addEventListener("click", () => fit());
+  $("tb100").addEventListener("click", () => { const r = viewport.getBoundingClientRect(); zoomAt(1 / view.s, r.width / 2, r.height / 2); });
+  $("tbReset").addEventListener("click", () => {
+    const prev = data.boxes.map((b) => [b.id, b.x, b.y]);
+    data.boxes.forEach((b) => { delete b.x; delete b.y; delete b._auto; });
+    render(); save(); fit(0.5);
+    toast("Layout reset.", "Undo", () => {
+      const m = byId(); prev.forEach(([id, x, y]) => { if (m[id]) { m[id].x = x; m[id].y = y; } });
+      render(); save();
+    });
+  });
+
+  let toastTimer = 0;
+  function toast(msg, btn, fn) {
+    $("toastMsg").textContent = msg;
+    const b = $("toastBtn");
+    b.style.display = btn ? "" : "none"; b.textContent = btn || "";
+    b.onclick = () => { $("toast").classList.remove("show"); fn && fn(); };
+    $("toast").classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 5000);
+  }
+
+  $("q").addEventListener("input", (e) => { query = e.target.value; drawAll(); renderTree(); });
+  $("q").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { const q = query.trim().toLowerCase(); const b = data.boxes.find((x) => matches(x, q)); if (b) focusBox(b.id); }
+    if (e.key === "Escape") { e.target.value = ""; query = ""; drawAll(); renderTree(); }
+  });
+
+  /* ---------- edit data ---------- */
+  function pretty(v, ind = "") {
+    if (Array.isArray(v)) {
+      if (v.every((x) => x === null || typeof x !== "object")) return "[" + v.map((x) => JSON.stringify(x)).join(", ") + "]";
+      if (!v.length) return "[]";
+      return "[\n" + v.map((x) => ind + "  " + pretty(x, ind + "  ")).join(",\n") + "\n" + ind + "]";
+    }
+    if (v && typeof v === "object") {
+      const ks = Object.keys(v).filter((k) => v[k] !== undefined && !k.startsWith("_"));
+      return "{\n" + ks.map((k) => ind + "  " + JSON.stringify(k) + ": " + pretty(v[k], ind + "  ")).join(",\n") + "\n" + ind + "}";
+    }
+    return JSON.stringify(v);
+  }
+  function exportData() {
+    const d = clone(data);
+    d.boxes.forEach((b) => { if (b.x != null) b.x = Math.round(b.x); if (b.y != null) b.y = Math.round(b.y); });
+    return pretty(d);
+  }
+  function openModal() { $("dText").value = exportData(); $("dErr").textContent = ""; $("modal").classList.add("open"); const t = $("dText"); t.focus(); t.setSelectionRange(0, 0); t.scrollTop = 0; }
+  function closeModal() { $("modal").classList.remove("open"); }
+  $("tbEdit").addEventListener("click", openModal);
+  $("dClose").addEventListener("click", closeModal);
+  $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
+  $("dApply").addEventListener("click", () => {
+    let d;
+    try { d = JSON.parse($("dText").value); }
+    catch (err) { $("dErr").textContent = "That isn’t valid JSON: " + err.message + ". Check for a missing comma or quote near that spot."; return; }
+    const ok = valid(d);
+    if (ok !== true) { $("dErr").textContent = ok; return; }
+    data = d; if (sel && !byId()[sel]) { sel = null; selRow = null; }
+    render(); save(); closeModal(); toast("Diagram updated.");
+  });
+  $("dCopy").addEventListener("click", () => {
+    copyText($("dText").value).then((ok) => {
+      if (ok) { $("dErr").textContent = ""; toast("JSON copied. Paste it over the DIAGRAM block to make it permanent."); }
+      else { $("dText").select(); $("dErr").textContent = "Couldn’t reach the clipboard. The text is selected; press Ctrl+C or ⌘C."; }
+    });
+  });
+  $("dRestore").addEventListener("click", () => {
+    const prev = clone(data);
+    data = clone(DIAGRAM); sel = null; selRow = null;
+    try { localStorage.removeItem(STORE); } catch (e) {}
+    $("dText").value = exportData(); render(); fit(0.5);
+    toast("Original diagram restored.", "Undo", () => { data = prev; render(); save(); });
+  });
+  $("dText").addEventListener("keydown", (e) => {
+    if (e.key === "Tab") { e.preventDefault(); const t = e.target, s = t.selectionStart; t.setRangeText("  ", s, t.selectionEnd, "end"); }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") $("dApply").click();
+  });
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+  function legacyCopy(text) {
+    try {
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok;
+    } catch (e) { return false; }
+  }
+
+  /* ---------- keyboard ---------- */
+  document.addEventListener("keydown", (e) => {
+    if ($("modal").classList.contains("open")) { if (e.key === "Escape") closeModal(); return; }
+    if (e.target.matches("input,textarea")) return;
+    if (e.key === "Escape") select(null);
+    else if (e.key === "+" || e.key === "=") zoomCenter(1.2);
+    else if (e.key === "-") zoomCenter(1 / 1.2);
+    else if (e.key === "f" || e.key === "F") fit();
+    else if (e.key === "0") $("tb100").click();
+  });
+
+  /* ---------- start ---------- */
+  if (window.matchMedia("(max-width:820px)").matches) toggleSidebar(false);
+  render();
+  requestAnimationFrame(() => fit(window.matchMedia("(max-width:820px)").matches ? 0.42 : 0.55));
+})();
+</script>
+</body>
+</html>
