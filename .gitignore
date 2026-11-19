@@ -1,0 +1,9 @@
+# Runtime logs can contain camera-derived descriptions and robot positions — keep them out of git.
+pearl_backend_v1/logs/*
+!pearl_backend_v1/logs/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+# Local overrides with your real IP / settings
+.env
+*.local.*
